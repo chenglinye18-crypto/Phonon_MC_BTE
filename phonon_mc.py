@@ -1,0 +1,3250 @@
+from __future__ import annotations
+
+import csv
+import math
+import os
+import re
+import shutil
+import time
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+from numba import njit, prange, set_num_threads
+from scipy.interpolate import PchipInterpolator
+
+
+K_B = 1.380649e-23
+HBAR = 1.054571817e-34
+REALMIN = np.finfo(np.float64).tiny
+REPO_DIR = Path(__file__).resolve().parent
+MATLAB_DIR = REPO_DIR / "Matlab"
+INPUT_DIR = REPO_DIR / "input"
+LEGACY_INPUT_DIR = MATLAB_DIR / "input"
+
+
+def ensure_num_threads(n_threads: int | None = None) -> int:
+    if n_threads is None or n_threads <= 0:
+        n_threads = max(1, os.cpu_count() or 1)
+    try:
+        set_num_threads(int(n_threads))
+    except Exception:
+        pass
+    return int(n_threads)
+
+
+@dataclass
+class ParticleBlock:
+    id: np.ndarray
+    par_id: np.ndarray
+    cell: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    z: np.ndarray
+    b: np.ndarray
+    m: np.ndarray
+    w: np.ndarray
+    q: np.ndarray
+    vx: np.ndarray
+    vy: np.ndarray
+    vz: np.ndarray
+    vabs: np.ndarray
+    E: np.ndarray
+    sgn: np.ndarray
+    n_ph: np.ndarray
+    seed: np.ndarray
+    t_left: np.ndarray
+
+    @classmethod
+    def empty(cls) -> "ParticleBlock":
+        return cls(
+            id=np.zeros(0, dtype=np.int64),
+            par_id=np.zeros(0, dtype=np.int64),
+            cell=np.zeros(0, dtype=np.int32),
+            x=np.zeros(0, dtype=np.float64),
+            y=np.zeros(0, dtype=np.float64),
+            z=np.zeros(0, dtype=np.float64),
+            b=np.zeros(0, dtype=np.int32),
+            m=np.zeros(0, dtype=np.int32),
+            w=np.zeros(0, dtype=np.float64),
+            q=np.zeros(0, dtype=np.float64),
+            vx=np.zeros(0, dtype=np.float64),
+            vy=np.zeros(0, dtype=np.float64),
+            vz=np.zeros(0, dtype=np.float64),
+            vabs=np.zeros(0, dtype=np.float64),
+            E=np.zeros(0, dtype=np.float64),
+            sgn=np.zeros(0, dtype=np.int8),
+            n_ph=np.zeros(0, dtype=np.float64),
+            seed=np.zeros(0, dtype=np.int64),
+            t_left=np.zeros(0, dtype=np.float64),
+        )
+
+    def copy(self) -> "ParticleBlock":
+        return ParticleBlock(
+            id=self.id.copy(),
+            par_id=self.par_id.copy(),
+            cell=self.cell.copy(),
+            x=self.x.copy(),
+            y=self.y.copy(),
+            z=self.z.copy(),
+            b=self.b.copy(),
+            m=self.m.copy(),
+            w=self.w.copy(),
+            q=self.q.copy(),
+            vx=self.vx.copy(),
+            vy=self.vy.copy(),
+            vz=self.vz.copy(),
+            vabs=self.vabs.copy(),
+            E=self.E.copy(),
+            sgn=self.sgn.copy(),
+            n_ph=self.n_ph.copy(),
+            seed=self.seed.copy(),
+            t_left=self.t_left.copy(),
+        )
+
+    def __len__(self) -> int:
+        return int(self.id.size)
+
+    @property
+    def v(self) -> np.ndarray:
+        if len(self) == 0:
+            return np.zeros((0, 3), dtype=np.float64)
+        return np.column_stack((self.vx, self.vy, self.vz))
+
+    @staticmethod
+    def _take_array(arr: np.ndarray, idx: np.ndarray | slice) -> np.ndarray:
+        out = arr[idx]
+        if isinstance(idx, slice):
+            return out.copy()
+        return out
+
+    def take(self, idx: np.ndarray | slice) -> "ParticleBlock":
+        return ParticleBlock(
+            id=self._take_array(self.id, idx),
+            par_id=self._take_array(self.par_id, idx),
+            cell=self._take_array(self.cell, idx),
+            x=self._take_array(self.x, idx),
+            y=self._take_array(self.y, idx),
+            z=self._take_array(self.z, idx),
+            b=self._take_array(self.b, idx),
+            m=self._take_array(self.m, idx),
+            w=self._take_array(self.w, idx),
+            q=self._take_array(self.q, idx),
+            vx=self._take_array(self.vx, idx),
+            vy=self._take_array(self.vy, idx),
+            vz=self._take_array(self.vz, idx),
+            vabs=self._take_array(self.vabs, idx),
+            E=self._take_array(self.E, idx),
+            sgn=self._take_array(self.sgn, idx),
+            n_ph=self._take_array(self.n_ph, idx),
+            seed=self._take_array(self.seed, idx),
+            t_left=self._take_array(self.t_left, idx),
+        )
+
+    def append(self, other: "ParticleBlock") -> "ParticleBlock":
+        if len(self) == 0:
+            return other.copy()
+        if len(other) == 0:
+            return self.copy()
+        return ParticleBlock(
+            id=np.concatenate((self.id, other.id)),
+            par_id=np.concatenate((self.par_id, other.par_id)),
+            cell=np.concatenate((self.cell, other.cell)),
+            x=np.concatenate((self.x, other.x)),
+            y=np.concatenate((self.y, other.y)),
+            z=np.concatenate((self.z, other.z)),
+            b=np.concatenate((self.b, other.b)),
+            m=np.concatenate((self.m, other.m)),
+            w=np.concatenate((self.w, other.w)),
+            q=np.concatenate((self.q, other.q)),
+            vx=np.concatenate((self.vx, other.vx)),
+            vy=np.concatenate((self.vy, other.vy)),
+            vz=np.concatenate((self.vz, other.vz)),
+            vabs=np.concatenate((self.vabs, other.vabs)),
+            E=np.concatenate((self.E, other.E)),
+            sgn=np.concatenate((self.sgn, other.sgn)),
+            n_ph=np.concatenate((self.n_ph, other.n_ph)),
+            seed=np.concatenate((self.seed, other.seed)),
+            t_left=np.concatenate((self.t_left, other.t_left)),
+        )
+
+
+@dataclass
+class SimulationState:
+    p: ParticleBlock
+    WE: float
+    Wp: float
+    Nsp_cell: np.ndarray
+    enhance_factor: np.ndarray
+    info: dict[str, Any]
+
+
+def get_or(s: Any, name: str, default_v: Any) -> Any:
+    if isinstance(s, dict) and name in s and s[name] is not None:
+        return s[name]
+    return default_v
+
+
+def as_path(path_like: Any) -> Path:
+    return Path(path_like).expanduser().resolve()
+
+
+def resolve_base_dir(base_dir: str | Path | None = None) -> Path:
+    if base_dir is not None:
+        return Path(base_dir)
+    return REPO_DIR
+
+
+def resolve_input_dir(base_dir: str | Path | None = None) -> Path:
+    if base_dir is not None:
+        base = Path(base_dir)
+        if base.name == "input" and base.is_dir():
+            return base
+        candidate = base / "input"
+        if candidate.is_dir():
+            return candidate
+        return base
+    if INPUT_DIR.is_dir():
+        return INPUT_DIR
+    return LEGACY_INPUT_DIR
+
+
+def load_solver_param_config(config_path: str | Path) -> dict[str, Any]:
+    path = Path(config_path)
+    if not path.is_file():
+        return {}
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def apply_solver_param_config(opts: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    if not config:
+        return opts
+    if "E_eff" in config:
+        opts["E_eff"] = float(config["E_eff"])
+    for key in ("dt", "dt_min", "dt_max", "ET_table_T_min", "ET_table_T_max", "p_target"):
+        if key in config and config[key] is not None:
+            opts[key] = float(config[key])
+    if "ET_table_nT" in config and config["ET_table_nT"] is not None:
+        opts["ET_table_nT"] = int(config["ET_table_nT"])
+    if "max_steps" in config and config["max_steps"] is not None:
+        opts["max_steps"] = int(config["max_steps"])
+    output_cfg = dict(config.get("output", {}))
+    if output_cfg:
+        out = dict(get_or(opts, "output", {}))
+        if "every_n_steps" in output_cfg and output_cfg["every_n_steps"] is not None:
+            out["every_n_steps"] = max(1, int(round(output_cfg["every_n_steps"])))
+        opts["output"] = out
+    reservoir_cfg = dict(config.get("reservoir", {}))
+    if reservoir_cfg:
+        res = dict(get_or(opts, "reservoir", {}))
+        if "refresh_every_n_steps" in reservoir_cfg and reservoir_cfg["refresh_every_n_steps"] is not None:
+            res["refresh_every_n_steps"] = max(1, int(round(reservoir_cfg["refresh_every_n_steps"])))
+        if "refresh_at_step1" in reservoir_cfg and reservoir_cfg["refresh_at_step1"] is not None:
+            res["refresh_at_step1"] = bool(reservoir_cfg["refresh_at_step1"])
+        opts["reservoir"] = res
+    scattering = dict(config.get("scattering", {}))
+    for key in ("BL", "BTN", "BTU", "tau_LTO_ps", "A_imp", "PB_Tsi", "PB_bulk_L", "PB_bulk_F", "PB_Delta", "transport_n"):
+        if key in scattering:
+            opts[key] = scattering[key]
+    return opts
+
+
+def clamp_vec(x: np.ndarray | float, lo: float, hi: float) -> np.ndarray | float:
+    return np.clip(x, lo, hi)
+
+
+def safe_pchip_data(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    x = np.asarray(x, dtype=np.float64).reshape(-1)
+    y = np.asarray(y, dtype=np.float64).reshape(-1)
+    order = np.argsort(x, kind="stable")
+    x = x[order]
+    y = y[order]
+    keep = np.ones_like(x, dtype=bool)
+    keep[1:] = np.diff(x) > 0
+    return x[keep], y[keep]
+
+
+def build_clamped_pchip(x: np.ndarray, y: np.ndarray) -> tuple[PchipInterpolator, np.ndarray]:
+    x2, y2 = safe_pchip_data(x, y)
+    if x2.size == 1:
+        x2 = np.array([x2[0], x2[0] + 1.0], dtype=np.float64)
+        y2 = np.array([y2[0], y2[0]], dtype=np.float64)
+    return PchipInterpolator(x2, y2, extrapolate=True), x2
+
+
+def eval_clamped(interp: PchipInterpolator, x_support: np.ndarray, xq: np.ndarray | float) -> np.ndarray:
+    xq_arr = np.asarray(xq, dtype=np.float64)
+    xq_clamped = np.clip(xq_arr, x_support[0], x_support[-1])
+    return np.asarray(interp(xq_clamped), dtype=np.float64)
+
+
+def ensure_2d_dw(spec: dict[str, Any]) -> np.ndarray:
+    dw = np.asarray(spec["dw"], dtype=np.float64)
+    B, Nw = spec["w_mid"].shape
+    if dw.ndim == 1:
+        if dw.size != Nw:
+            raise ValueError("spec.dw length must match Nw")
+        return np.tile(dw.reshape(1, -1), (B, 1))
+    if dw.shape != (B, Nw):
+        raise ValueError("spec.dw must be 1xNw or BxNw")
+    return dw
+
+
+def bose_occupation(w: np.ndarray, T: float | np.ndarray) -> np.ndarray:
+    T_use = np.maximum(np.asarray(T, dtype=np.float64), 1e-12)
+    x = HBAR * np.asarray(w, dtype=np.float64) / (K_B * T_use)
+    return 1.0 / np.maximum(np.exp(np.minimum(x, 700.0)) - 1.0, REALMIN)
+
+
+def rand_unit_vec_batch(n: int) -> np.ndarray:
+    if n <= 0:
+        return np.zeros((0, 3), dtype=np.float64)
+    u1 = np.random.random(n)
+    u2 = np.random.random(n)
+    cz = 2.0 * u1 - 1.0
+    sz = np.sqrt(np.maximum(0.0, 1.0 - cz * cz))
+    phi = 2.0 * np.pi * u2
+    return np.column_stack((sz * np.cos(phi), sz * np.sin(phi), cz))
+
+
+def sub2ind(nx: int, ny: int, nz: int, ix: np.ndarray | int, iy: np.ndarray | int, iz: np.ndarray | int) -> np.ndarray:
+    ix_arr = np.asarray(ix, dtype=np.int64)
+    iy_arr = np.asarray(iy, dtype=np.int64)
+    iz_arr = np.asarray(iz, dtype=np.int64)
+    return ix_arr + (iy_arr - 1) * nx + (iz_arr - 1) * nx * ny
+
+
+def ind2sub(nx: int, ny: int, nz: int, cid: np.ndarray | int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    cid_arr = np.asarray(cid, dtype=np.int64) - 1
+    ix = cid_arr % nx + 1
+    iy = (cid_arr // nx) % ny + 1
+    iz = cid_arr // (nx * ny) + 1
+    return ix.astype(np.int64), iy.astype(np.int64), iz.astype(np.int64)
+
+
+def read_clean_lines(filepath: str | Path) -> list[str]:
+    text = Path(filepath).read_text(encoding="utf-8")
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = raw.replace("\ufeff", "")
+        line = re.sub(r"[#%].*$", "", line).strip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def read_numeric_matrix(filepath: str | Path, delimiter: str | None = ",") -> np.ndarray:
+    data = np.genfromtxt(filepath, delimiter=delimiter, comments="#", dtype=np.float64)
+    if data.size == 0:
+        return np.zeros((0, 0), dtype=np.float64)
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+    valid = np.any(np.isfinite(data), axis=1)
+    return np.asarray(data[valid], dtype=np.float64)
+
+
+def write_csv_rows(filepath: str | Path, rows: Iterable[Iterable[Any]]) -> None:
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        for row in rows:
+            writer.writerow(list(row))
+
+
+def mc_default_opts(base_dir: str | Path | None = None) -> dict[str, Any]:
+    base_dir = resolve_base_dir(base_dir)
+    input_dir = resolve_input_dir(base_dir)
+    ensure_num_threads()
+    now_tag = time.strftime("%Y%m%d_%H%M%S")
+    solver_param_file = input_dir / "solver_params.toml"
+    opts: dict[str, Any] = {
+        "T0": None,
+        "initial_temperature_file": str(input_dir / "initial_temperature.csv"),
+        "reference_temperature_file": str(input_dir / "reference_temperature.txt"),
+        "volume_heat_source_file": str(input_dir / "volume_heat_source.txt"),
+        "solver_param_file": str(solver_param_file),
+        "dt": 0.0,
+        "dt_min": 1e-15,
+        "dt_max": 1e-11,
+        "ET_table_T_min": 1.0,
+        "ET_table_T_max": 2000.0,
+        "ET_table_nT": 2001,
+        "fly_mode": "cell",
+        "dt_safety_cfl": 0.5,
+        "p_target": 0.05,
+        "stop_when_steady": True,
+        "steady_tol_inf": 1e-2,
+        "steady_tol_l2": 1e-2,
+        "steady_min_steps": 50000,
+        "steady_streak_need": 3,
+        "mc_seed": 20240511,
+        "n_q": 5000,
+        "n_w": 1000,
+        "weight_by_Cv_for_Q": True,
+        "output": {
+            "enable": True,
+            "every_n_steps": 100,
+            "root_dir": "output",
+            "run_tag": now_tag,
+            "heat_flux_monitor_file": str(input_dir / "heat_flux_monitors.txt"),
+            "monitor_length_scale": 1e-6,
+        },
+        "reservoir": {
+            "enable": True,
+            "refresh_every_n_steps": 100,
+            "refresh_at_step1": True,
+        },
+        "scatter_on": True,
+        "tau_LTO_ps": 3.5,
+        "A_imp": 1.32e-45,
+        "PB_Tsi": 100e-9,
+        "PB_bulk_L": 7.16e-3,
+        "PB_bulk_F": 0.68,
+        "PB_Delta": 0.0,
+        "max_steps": 50000,
+        "T_underrelax": 0.5,
+        "parallel": {
+            "num_threads": max(1, os.cpu_count() or 1),
+        },
+        "log": {
+            "on": True,
+            "to_file": False,
+            "filename": "mc_log.txt",
+            "print_every": 1,
+            "fly_chunk": 200000,
+        },
+        "viz": {
+            "enable": False,
+        },
+        "Tref": 350.0,
+        "use_bin_center_w": True,
+        "mode": "deviational",
+        "enhance_factor": 1.0,
+        "max_particles": int(2e8),
+    }
+    return apply_solver_param_config(opts, load_solver_param_config(solver_param_file))
+
+
+def et_lookup_cfg_from_opts(opts: dict[str, Any]) -> dict[str, Any]:
+    cfg = {
+        "T_min": float(get_or(opts, "ET_table_T_min", 1.0)),
+        "T_max": float(get_or(opts, "ET_table_T_max", 2000.0)),
+        "nT": int(get_or(opts, "ET_table_nT", 2001)),
+    }
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational" and np.isfinite(get_or(opts, "Tref", np.nan)):
+        cfg["Tref"] = float(opts["Tref"])
+    return cfg
+
+
+def setup_case_from_ldg_lgrid(
+    ldg_file: str | Path | None = None,
+    lgrid_file: str | Path | None = None,
+    length_scale: float = 1e-6,
+    input_length_unit: str = "um",
+    verbose: bool = True,
+) -> dict[str, Any]:
+    if ldg_file is None:
+        ldg_file = resolve_input_dir() / "ldg.txt"
+    if lgrid_file is None:
+        lgrid_file = resolve_input_dir() / "lgrid.txt"
+    layout = parse_ldg(ldg_file, length_scale)
+    grid = parse_lgrid(lgrid_file, length_scale)
+    validate_layout_vs_grid(layout, grid)
+    layout = build_layout_from_rules(layout)
+    geom = {
+        "shape": "box",
+        "origin": np.array([grid["x_edges"][0], grid["y_edges"][0], grid["z_edges"][0]], dtype=np.float64),
+        "L": np.array(
+            [
+                grid["x_edges"][-1] - grid["x_edges"][0],
+                grid["y_edges"][-1] - grid["y_edges"][0],
+                grid["z_edges"][-1] - grid["z_edges"][0],
+            ],
+            dtype=np.float64,
+        ),
+    }
+    mesh = {
+        "Nx": grid["Nx"],
+        "Ny": grid["Ny"],
+        "Nz": grid["Nz"],
+        "x_edges": grid["x_edges"],
+        "y_edges": grid["y_edges"],
+        "z_edges": grid["z_edges"],
+    }
+    cs = {
+        "units": {"length": "m", "input_length": input_length_unit, "temp": "K"},
+        "geom": geom,
+        "mesh": mesh,
+        "regions": layout["regions"],
+        "materials": layout["materials"],
+        "layout": layout,
+        "grid": grid,
+    }
+    if verbose:
+        print_case_summary(cs, length_scale)
+    return cs
+
+
+def parse_ldg(filepath: str | Path, length_scale: float) -> dict[str, Any]:
+    lines = read_clean_lines(filepath)
+    vars_input: dict[str, float] = {}
+    vars_si: dict[str, float] = {}
+    regions: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] = []
+    reservoirs: list[dict[str, Any]] = []
+    for line in lines:
+        tokens = re.split(r"\s+", line)
+        head = tokens[0].lower()
+        if tokens[0].startswith("$") and tokens[0].endswith("$"):
+            var_name = re.sub(r"^\$|\$$", "", tokens[0])
+            expr = " ".join(tokens[1:]).strip()
+            value_input = eval_expr(expr, vars_input)
+            vars_input[var_name] = value_input
+            vars_si[var_name] = value_input * length_scale
+            continue
+        if head == "region":
+            if len(tokens) < 8:
+                raise ValueError(f"invalid region line: {line}")
+            bounds_input = np.array([eval_expr(tokens[1 + k], vars_input) for k in range(6)], dtype=np.float64)
+            regions.append(
+                {
+                    "bounds_input": bounds_input,
+                    "bounds": bounds_input * length_scale,
+                    "material": tokens[7],
+                    "raw": line,
+                }
+            )
+            continue
+        if head in {"planerule", "lanerule"}:
+            if len(tokens) < 9:
+                raise ValueError(f"invalid rule line: {line}")
+            bounds_input = np.array([eval_expr(tokens[1 + k], vars_input) for k in range(6)], dtype=np.float64)
+            rule = {
+                "kind": head,
+                "bounds_input": bounds_input,
+                "bounds": bounds_input * length_scale,
+                "normal": tokens[7].upper(),
+                "mode": tokens[8].upper(),
+                "raw": line,
+            }
+            rules.append(finalize_rule(rule, vars_si))
+            continue
+        if head == "reservoir":
+            if len(tokens) < 7:
+                raise ValueError(f"invalid reservoir line: {line}")
+            bounds_input = np.array([eval_expr(tokens[1 + k], vars_input) for k in range(6)], dtype=np.float64)
+            reservoirs.append(
+                {
+                    "id": len(reservoirs) + 1,
+                    "name": f"reservoir_{len(reservoirs) + 1}",
+                    "bounds_input": bounds_input,
+                    "bounds": bounds_input * length_scale,
+                    "raw": line,
+                }
+            )
+            continue
+        raise ValueError(f"unsupported ldg entry: {line}")
+    materials: list[str] = []
+    seen: set[str] = set()
+    for reg in regions:
+        key = reg["material"].upper()
+        if key not in seen:
+            materials.append(reg["material"])
+            seen.add(key)
+    return {
+        "source": str(as_path(filepath)),
+        "variables_input": vars_input,
+        "variables_si": vars_si,
+        "regions": regions,
+        "materials": materials,
+        "rules": rules,
+        "reservoirs": reservoirs,
+    }
+
+
+def parse_lgrid(filepath: str | Path, length_scale: float) -> dict[str, Any]:
+    lines = read_clean_lines(filepath)
+    axes: dict[str, Any] = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = re.match(r"^([XYZxyz])\s+(\d+)\s*:?\s*(.*)$", line)
+        if match is None:
+            raise ValueError(f"invalid lgrid header: {line}")
+        axis_name = match.group(1).upper()
+        n_points = int(match.group(2))
+        tail = match.group(3).strip()
+        if not tail:
+            i += 1
+            if i >= len(lines):
+                raise ValueError(f"missing node list for axis {axis_name}")
+            tail = lines[i]
+        anchors_input = parse_braced_list(tail)
+        edges_input = expand_axis_points(anchors_input, n_points)
+        axes[axis_name.lower()] = {
+            "n_points": n_points,
+            "anchors_input": anchors_input.astype(np.float64),
+            "edges_input": edges_input.astype(np.float64),
+            "edges": edges_input.astype(np.float64) * length_scale,
+        }
+        i += 1
+    for tag in ("x", "y", "z"):
+        if tag not in axes:
+            raise ValueError("lgrid must define X, Y and Z")
+    return {
+        "source": str(as_path(filepath)),
+        "axes": axes,
+        "x_edges": axes["x"]["edges"],
+        "y_edges": axes["y"]["edges"],
+        "z_edges": axes["z"]["edges"],
+        "Nx": axes["x"]["edges"].size - 1,
+        "Ny": axes["y"]["edges"].size - 1,
+        "Nz": axes["z"]["edges"].size - 1,
+    }
+
+
+def parse_braced_list(line: str) -> np.ndarray:
+    match = re.match(r"^\{(.*)\}$", line.strip())
+    if match is None:
+        raise ValueError(f"expected braced list, got: {line}")
+    parts = [p.strip() for p in match.group(1).split(",")]
+    values = [eval_expr(part, {}) for part in parts]
+    return np.asarray(values, dtype=np.float64)
+
+
+def expand_axis_points(anchors: np.ndarray, n_points: int) -> np.ndarray:
+    anchors = np.asarray(anchors, dtype=np.float64).reshape(-1)
+    if n_points < 2 or anchors.size < 2:
+        raise ValueError("axis requires at least two points")
+    if np.any(np.diff(anchors) <= 0):
+        raise ValueError("axis anchors must be strictly increasing")
+    if n_points == anchors.size:
+        return anchors.copy()
+    uniform_points = np.linspace(anchors[0], anchors[-1], n_points)
+    tol = 1e-12 * max(1.0, abs(anchors[-1] - anchors[0]))
+    if all(np.any(np.abs(uniform_points - a) <= tol) for a in anchors):
+        return uniform_points
+    n_seg = anchors.size - 1
+    n_intervals = n_points - 1
+    if n_intervals < n_seg:
+        raise ValueError("grid point count is too small to include all anchors")
+    lengths = np.diff(anchors)
+    exact = lengths / lengths.sum() * n_intervals
+    counts = np.floor(exact).astype(np.int64)
+    remainder = n_intervals - int(counts.sum())
+    if remainder > 0:
+        order = np.argsort(-(exact - counts))
+        counts[order[:remainder]] += 1
+    while np.any(counts == 0):
+        zero_idx = int(np.flatnonzero(counts == 0)[0])
+        donors = np.flatnonzero(counts > 1)
+        if donors.size == 0:
+            raise ValueError("failed to allocate intervals for all anchors")
+        donor = int(donors[np.argmax(counts[donors] - exact[donors])])
+        counts[donor] -= 1
+        counts[zero_idx] = 1
+    pieces = [np.array([anchors[0]], dtype=np.float64)]
+    for i in range(n_seg):
+        seg = np.linspace(anchors[i], anchors[i + 1], int(counts[i]) + 1)
+        pieces.append(seg[1:])
+    return np.concatenate(pieces)
+
+
+def eval_expr(expr: str, vars_dict: dict[str, float]) -> float:
+    expr_use = expr.strip()
+    for token in re.findall(r"\$([A-Za-z]\w*)\$", expr_use):
+        if token not in vars_dict:
+            raise ValueError(f"undefined variable ${token}$ in expression {expr!r}")
+        expr_use = re.sub(rf"\${token}\$", f"{vars_dict[token]:.17g}", expr_use)
+    if re.match(r"^[0-9eE\+\-\*\/\.\(\)\s]+$", expr_use) is None:
+        raise ValueError(f"unsafe expression {expr!r}")
+    value = eval(expr_use, {"__builtins__": {}}, {})
+    if not np.isfinite(value):
+        raise ValueError(f"expression is not finite: {expr!r}")
+    return float(value)
+
+
+def finalize_rule(rule: dict[str, Any], vars_si: dict[str, float]) -> dict[str, Any]:
+    values = np.array(list(vars_si.values()), dtype=np.float64)
+    tol = 1e-12 * max(1.0, float(np.max(np.abs(values))) if values.size else 1.0)
+    axis_name, coord = rule_axis_and_coord(rule)
+    rule["axis"] = axis_name
+    rule["coord"] = coord
+    rule["patch_area"] = rule_patch_area(rule)
+    location, face_tag = rule_location(rule, vars_si, tol)
+    rule["location"] = location
+    rule["face_tag"] = face_tag
+    return rule
+
+
+def rule_axis_and_coord(rule: dict[str, Any]) -> tuple[str, float]:
+    normal = rule["normal"].upper()
+    b = np.asarray(rule["bounds"], dtype=np.float64)
+    if normal in {"+X", "-X"}:
+        return "x", float(0.5 * (b[0] + b[1]))
+    if normal in {"+Y", "-Y"}:
+        return "y", float(0.5 * (b[2] + b[3]))
+    if normal in {"+Z", "-Z"}:
+        return "z", float(0.5 * (b[4] + b[5]))
+    raise ValueError(f"invalid rule normal {normal}")
+
+
+def rule_patch_area(rule: dict[str, Any]) -> float:
+    b = np.asarray(rule["bounds"], dtype=np.float64)
+    normal = rule["normal"].upper()
+    if normal in {"+X", "-X"}:
+        return max(b[3] - b[2], 0.0) * max(b[5] - b[4], 0.0)
+    if normal in {"+Y", "-Y"}:
+        return max(b[1] - b[0], 0.0) * max(b[5] - b[4], 0.0)
+    if normal in {"+Z", "-Z"}:
+        return max(b[1] - b[0], 0.0) * max(b[3] - b[2], 0.0)
+    return 0.0
+
+
+def rule_location(rule: dict[str, Any], vars_si: dict[str, float], tol: float) -> tuple[str, str]:
+    if not {"Lx", "Ly", "Lz"}.issubset(vars_si):
+        return "internal", ""
+    coord = float(rule["coord"])
+    normal = rule["normal"].upper()
+    if normal == "-X" and abs(coord - 0.0) <= tol:
+        return "boundary", "x_min"
+    if normal == "+X" and abs(coord - vars_si["Lx"]) <= tol:
+        return "boundary", "x_max"
+    if normal == "-Y" and abs(coord - 0.0) <= tol:
+        return "boundary", "y_min"
+    if normal == "+Y" and abs(coord - vars_si["Ly"]) <= tol:
+        return "boundary", "y_max"
+    if normal == "-Z" and abs(coord - 0.0) <= tol:
+        return "boundary", "z_min"
+    if normal == "+Z" and abs(coord - vars_si["Lz"]) <= tol:
+        return "boundary", "z_max"
+    return "internal", ""
+
+
+def build_layout_from_rules(layout: dict[str, Any]) -> dict[str, Any]:
+    face_tags = ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")
+    boundary_patches = {tag: [] for tag in face_tags}
+    for rule in layout.get("rules", []):
+        if rule.get("location") != "boundary":
+            continue
+        boundary_patches[rule["face_tag"]].append(
+            {
+                "face_tag": rule["face_tag"],
+                "mode": rule["mode"].upper(),
+                "normal": rule["normal"].upper(),
+                "bounds": np.asarray(rule["bounds"], dtype=np.float64),
+                "bounds_input": np.asarray(rule["bounds_input"], dtype=np.float64),
+                "patch_area": float(rule["patch_area"]),
+                "raw": rule["raw"],
+            }
+        )
+    layout["boundary_patches"] = boundary_patches
+    layout["warnings"] = []
+    return layout
+
+
+def validate_layout_vs_grid(layout: dict[str, Any], grid: dict[str, Any]) -> None:
+    vars_si = layout.get("variables_si", {})
+    if {"Lx", "Ly", "Lz"}.issubset(vars_si):
+        declared = np.array([vars_si["Lx"], vars_si["Ly"], vars_si["Lz"]], dtype=np.float64)
+        gridded = np.array(
+            [
+                grid["x_edges"][-1] - grid["x_edges"][0],
+                grid["y_edges"][-1] - grid["y_edges"][0],
+                grid["z_edges"][-1] - grid["z_edges"][0],
+            ],
+            dtype=np.float64,
+        )
+        tol = 1e-12 * max(1.0, float(np.max(np.abs(np.concatenate((declared, gridded))))))
+        if np.any(np.abs(declared - gridded) > tol):
+            raise ValueError("ldg dimensions [Lx Ly Lz] and lgrid extents do not match")
+
+
+def print_case_summary(cs: dict[str, Any], length_scale: float) -> None:
+    geom = cs["geom"]
+    Lin = np.asarray(geom["L"], dtype=np.float64) / length_scale
+    print(f"[case] loaded {cs['layout']['source']} and {cs['grid']['source']}")
+    print(f"[geom] box | L = ({Lin[0]:.6g}, {Lin[1]:.6g}, {Lin[2]:.6g}) {cs['units']['input_length']}")
+    print(
+        "[mesh] cells = (%d, %d, %d) | nodes = (%d, %d, %d)"
+        % (
+            cs["grid"]["Nx"],
+            cs["grid"]["Ny"],
+            cs["grid"]["Nz"],
+            cs["grid"]["axes"]["x"]["n_points"],
+            cs["grid"]["axes"]["y"]["n_points"],
+            cs["grid"]["axes"]["z"]["n_points"],
+        )
+    )
+    if cs.get("materials"):
+        print(f"[mat] regions = {len(cs['regions'])} | materials = {', '.join(cs['materials'])}")
+    if cs["layout"].get("reservoirs"):
+        print(f"[reservoir] count = {len(cs['layout']['reservoirs'])}")
+    for tag in ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max"):
+        patches = cs["layout"]["boundary_patches"].get(tag, [])
+        total_area = sum(float(p["patch_area"]) for p in patches)
+        face_area = face_area_from_geom(geom, tag)
+        coverage = total_area / max(face_area, np.finfo(np.float64).eps)
+        print(f"[face] {tag:<5} patches={len(patches)} coverage={100.0 * coverage:.1f}%")
+
+
+def face_area_from_geom(geom: dict[str, Any], face_tag: str) -> float:
+    L = np.asarray(geom["L"], dtype=np.float64)
+    if face_tag in {"x_min", "x_max"}:
+        return float(L[1] * L[2])
+    if face_tag in {"y_min", "y_max"}:
+        return float(L[0] * L[2])
+    if face_tag in {"z_min", "z_max"}:
+        return float(L[0] * L[1])
+    raise ValueError(f"invalid face tag {face_tag}")
+
+
+def init_mesh_from_geom(cs: dict[str, Any]) -> dict[str, Any]:
+    X = np.asarray(cs["mesh"]["x_edges"], dtype=np.float64).reshape(-1)
+    Y = np.asarray(cs["mesh"]["y_edges"], dtype=np.float64).reshape(-1)
+    Z = np.asarray(cs["mesh"]["z_edges"], dtype=np.float64).reshape(-1)
+    if np.any(np.diff(X) <= 0) or np.any(np.diff(Y) <= 0) or np.any(np.diff(Z) <= 0):
+        raise ValueError("mesh edges must be strictly increasing")
+    Nx, Ny, Nz = X.size - 1, Y.size - 1, Z.size - 1
+    Nc = Nx * Ny * Nz
+    dx, dy, dz = np.diff(X), np.diff(Y), np.diff(Z)
+    xc = 0.5 * (X[:-1] + X[1:])
+    yc = 0.5 * (Y[:-1] + Y[1:])
+    zc = 0.5 * (Z[:-1] + Z[1:])
+    Xc, Yc, Zc = np.meshgrid(xc, yc, zc, indexing="ij")
+    I, J, K = np.meshgrid(np.arange(1, Nx + 1), np.arange(1, Ny + 1), np.arange(1, Nz + 1), indexing="ij")
+    xmin = X[I - 1]
+    xmax = X[I]
+    ymin = Y[J - 1]
+    ymax = Y[J]
+    zmin = Z[K - 1]
+    zmax = Z[K]
+    centers = np.column_stack((Xc.ravel(order="F"), Yc.ravel(order="F"), Zc.ravel(order="F")))
+    boxes = np.column_stack(
+        (
+            xmin.ravel(order="F"),
+            xmax.ravel(order="F"),
+            ymin.ravel(order="F"),
+            ymax.ravel(order="F"),
+            zmin.ravel(order="F"),
+            zmax.ravel(order="F"),
+        )
+    )
+    vol = (xmax - xmin) * (ymax - ymin) * (zmax - zmin)
+    mesh = {
+        "L": np.array([X[-1] - X[0], Y[-1] - Y[0], Z[-1] - Z[0]], dtype=np.float64),
+        "Lx": float(X[-1] - X[0]),
+        "Ly": float(Y[-1] - Y[0]),
+        "Lz": float(Z[-1] - Z[0]),
+        "origin": np.array([X[0], Y[0], Z[0]], dtype=np.float64),
+        "Nx": Nx,
+        "Ny": Ny,
+        "Nz": Nz,
+        "Nc": Nc,
+        "dx": dx,
+        "dy": dy,
+        "dz": dz,
+        "dx_min": float(dx.min()),
+        "dy_min": float(dy.min()),
+        "dz_min": float(dz.min()),
+        "hmin": float(min(dx.min(), dy.min(), dz.min())),
+        "centers": centers,
+        "vol": vol.ravel(order="F"),
+        "cell_vol": vol.ravel(order="F"),
+        "boxes": boxes,
+        "domain_box": np.array([X[0], X[-1], Y[0], Y[-1], Z[0], Z[-1]], dtype=np.float64),
+        "x_edges": X,
+        "y_edges": Y,
+        "z_edges": Z,
+        "xc": xc,
+        "yc": yc,
+        "zc": zc,
+        "Xc": Xc,
+        "Yc": Yc,
+        "Zc": Zc,
+        "Ax": float((Y[-1] - Y[0]) * (Z[-1] - Z[0])),
+        "Ay": float((X[-1] - X[0]) * (Z[-1] - Z[0])),
+        "Az": float((X[-1] - X[0]) * (Y[-1] - Y[0])),
+        "V": float(np.sum(vol)),
+        "regions": cs.get("regions", []),
+        "materials": cs.get("materials", []),
+        "layout": cs.get("layout", {}),
+        "grid": cs.get("grid", {}),
+    }
+    attach_cell_materials(mesh)
+    attach_reservoirs(mesh)
+    if mesh.get("layout"):
+        build_layout_behavior(mesh, mesh["layout"])
+    else:
+        mesh["boundary"] = {"by_face": {}}
+        mesh["face_rules"] = {"by_normal": {k: [] for k in ("xp", "xn", "yp", "yn", "zp", "zn")}, "all": []}
+    return mesh
+
+
+def attach_cell_materials(mesh: dict[str, Any]) -> None:
+    regions = mesh.get("regions", [])
+    Nc = mesh["Nc"]
+    centers = mesh["centers"]
+    cell_region_index = np.zeros(Nc, dtype=np.int32)
+    for ir, region in enumerate(regions, start=1):
+        b = np.asarray(region["bounds"], dtype=np.float64)
+        in_region = (
+            (centers[:, 0] >= b[0])
+            & (centers[:, 0] <= b[1])
+            & (centers[:, 1] >= b[2])
+            & (centers[:, 1] <= b[3])
+            & (centers[:, 2] >= b[4])
+            & (centers[:, 2] <= b[5])
+        )
+        cell_region_index[in_region] = ir
+    cell_material_name = [""] * Nc
+    for cid in range(Nc):
+        ir = int(cell_region_index[cid])
+        if ir > 0:
+            cell_material_name[cid] = regions[ir - 1]["material"]
+    assigned = [name for name in cell_material_name if name]
+    material_keys: list[str] = []
+    seen: set[str] = set()
+    for name in assigned:
+        key = material_key(name)
+        if key not in seen:
+            material_keys.append(key)
+            seen.add(key)
+    cell_material_index = np.zeros(Nc, dtype=np.int32)
+    for im, key in enumerate(material_keys, start=1):
+        for cid, name in enumerate(cell_material_name):
+            if material_key(name) == key:
+                cell_material_index[cid] = im
+    mesh["cell_region_index"] = cell_region_index
+    mesh["cell_material_name"] = cell_material_name
+    mesh["cell_material_index"] = cell_material_index
+    mesh["material_keys"] = material_keys
+
+
+def attach_reservoirs(mesh: dict[str, Any]) -> None:
+    reservoirs_src = mesh.get("layout", {}).get("reservoirs", [])
+    centers = mesh["centers"]
+    tol = 1e-12 * max(1.0, float(np.max(np.abs(centers))) if centers.size else 1.0)
+    reservoirs: list[dict[str, Any]] = []
+    cell_mask = np.zeros(mesh["Nc"], dtype=bool)
+    for src in reservoirs_src:
+        b = np.asarray(src["bounds"], dtype=np.float64)
+        in_res = (
+            (centers[:, 0] >= b[0] - tol)
+            & (centers[:, 0] <= b[1] + tol)
+            & (centers[:, 1] >= b[2] - tol)
+            & (centers[:, 1] <= b[3] + tol)
+            & (centers[:, 2] >= b[4] - tol)
+            & (centers[:, 2] <= b[5] + tol)
+        )
+        cells = np.flatnonzero(in_res).astype(np.int32) + 1
+        reservoirs.append(
+            {
+                "id": int(src["id"]),
+                "name": src["name"],
+                "bounds_input": np.asarray(src["bounds_input"], dtype=np.float64),
+                "bounds": np.asarray(src["bounds"], dtype=np.float64),
+                "cell_ids": cells,
+                "raw": src["raw"],
+            }
+        )
+        if cells.size:
+            cell_mask[cells - 1] = True
+    mesh["reservoirs"] = reservoirs
+    mesh["reservoir_cell_mask"] = cell_mask
+
+
+def build_layout_behavior(mesh: dict[str, Any], layout: dict[str, Any]) -> None:
+    mesh["boundary"] = {"by_face": {}}
+    face_rules = {"by_normal": {k: [] for k in ("xp", "xn", "yp", "yn", "zp", "zn")}, "all": []}
+    for rule in layout.get("rules", []):
+        entry = {
+            "normal": rule["normal"].upper(),
+            "mode": rule["mode"].upper(),
+            "axis": rule["axis"],
+            "coord": float(rule["coord"]),
+            "bounds": np.asarray(rule["bounds"], dtype=np.float64),
+            "bounds_input": np.asarray(rule["bounds_input"], dtype=np.float64),
+            "location": rule["location"],
+            "face_tag": rule["face_tag"],
+            "raw": rule["raw"],
+        }
+        face_rules["all"].append(entry)
+        face_rules["by_normal"][normal_key(entry["normal"])].append(entry)
+    mesh["face_rules"] = face_rules
+    for tag in ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max"):
+        mesh["boundary"]["by_face"][tag] = list(layout.get("boundary_patches", {}).get(tag, []))
+
+
+def material_key(name: str) -> str:
+    key = str(name).strip().upper()
+    if key in {"SI", "SILICON", "SI_100", "SILICON_100"}:
+        return "SILICON"
+    if key == "IGZO":
+        return "IGZO"
+    return key
+
+
+def resolve_case_material(cs: dict[str, Any]) -> dict[str, Any]:
+    materials = resolve_case_materials(cs)
+    primary = materials["list"][materials["primary_index"] - 1]["mat"].copy()
+    primary["case_material"] = materials["primary_key"]
+    primary["case_material_label"] = materials["primary_name"]
+    primary["material_library"] = materials
+    return primary
+
+
+def resolve_case_materials(cs: dict[str, Any]) -> dict[str, Any]:
+    raw_names = [reg["material"] for reg in cs.get("regions", [])] or cs.get("materials", [])
+    requested_names: list[str] = []
+    seen: set[str] = set()
+    for name in raw_names or ["SILICON"]:
+        key = material_key(str(name))
+        if key not in seen:
+            requested_names.append(str(name))
+            seen.add(key)
+    entries: list[dict[str, Any]] = []
+    for raw_name in requested_names:
+        key = material_key(raw_name)
+        entries.append({"name": raw_name, "key": key, "mat": load_material(key, raw_name)})
+    primary_name = requested_names[0] if requested_names else "SILICON"
+    primary_key = material_key(primary_name)
+    primary_index = 1
+    for i, entry in enumerate(entries, start=1):
+        if entry["key"] == primary_key:
+            primary_index = i
+            break
+    by_key = {entry["key"]: entry["mat"] for entry in entries}
+    region_names = [reg["material"] for reg in cs.get("regions", [])]
+    region_index = np.zeros(len(region_names), dtype=np.int32)
+    for i, region_name in enumerate(region_names):
+        key = material_key(region_name)
+        for j, entry in enumerate(entries, start=1):
+            if entry["key"] == key:
+                region_index[i] = j
+                break
+    return {
+        "names": [entry["name"] for entry in entries],
+        "keys": [entry["key"] for entry in entries],
+        "list": entries,
+        "by_key": by_key,
+        "primary_name": primary_name,
+        "primary_key": primary_key,
+        "primary_index": primary_index,
+        "region_material_name": region_names,
+        "region_material_index": region_index,
+    }
+
+
+def load_material(key: str, raw_name: str) -> dict[str, Any]:
+    if key == "SILICON":
+        mat = mat_silicon_100()
+    elif key == "IGZO":
+        mat = mat_igzo()
+    else:
+        print(f'[warn] unsupported material "{raw_name}", falling back to Silicon')
+        mat = mat_silicon_100()
+    mat["case_material"] = key
+    mat["case_material_label"] = raw_name
+    return mat
+
+
+def parse_header_metadata(filepath: str | Path) -> dict[str, Any]:
+    meta: dict[str, Any] = {"branch_names": [], "degeneracy": []}
+    for line in Path(filepath).read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if not text.startswith("#"):
+            break
+        body = text[1:].strip()
+        m_names = re.search(r"branch_names\s*=\s*([^;#]+)", body)
+        if m_names:
+            meta["branch_names"] = [p.strip() for p in m_names.group(1).split(",") if p.strip()]
+        m_deg = re.search(r"degeneracy\s*=\s*([^;#]+)", body)
+        if m_deg:
+            meta["degeneracy"] = [float(p.strip()) for p in m_deg.group(1).split(",") if p.strip()]
+    return meta
+
+
+def unique_samples(q: np.ndarray, f: np.ndarray, vg: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    unique_q, inverse = np.unique(q, return_inverse=True)
+    if unique_q.size == q.size:
+        return q, f, vg
+    f_u = np.zeros(unique_q.size, dtype=np.float64)
+    vg_u = np.zeros(unique_q.size, dtype=np.float64)
+    counts = np.zeros(unique_q.size, dtype=np.int64)
+    np.add.at(f_u, inverse, f)
+    np.add.at(vg_u, inverse, vg)
+    np.add.at(counts, inverse, 1)
+    return unique_q, f_u / counts, vg_u / counts
+
+
+def mat_from_phonon_dispersion_file(
+    file_path: str | Path,
+    material_name: str = "TableDriven",
+    branch_names: list[str] | None = None,
+    degeneracy: list[float] | None = None,
+) -> dict[str, Any]:
+    file_path = as_path(file_path)
+    if not file_path.is_file():
+        raise FileNotFoundError(file_path)
+    header_meta = parse_header_metadata(file_path)
+    data = np.genfromtxt(file_path, comments="#", dtype=np.float64)
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+    if data.shape[1] < 4:
+        raise ValueError(f"{file_path} must contain at least four numeric columns")
+    data = data[:, :4]
+    data = data[np.all(np.isfinite(data), axis=1)]
+    branch_id = np.round(data[:, 0]).astype(np.int64)
+    q_raw = data[:, 1].astype(np.float64)
+    f_thz = data[:, 2].astype(np.float64)
+    vg_raw = data[:, 3].astype(np.float64)
+    branch_ids: list[int] = []
+    seen: set[int] = set()
+    for bid in branch_id.tolist():
+        if bid not in seen:
+            branch_ids.append(int(bid))
+            seen.add(int(bid))
+    B = len(branch_ids)
+    q_common = np.unique(q_raw)
+    q_common.sort()
+    M = q_common.size
+    omega_tab = np.zeros((B, M), dtype=np.float64)
+    vg_tab = np.zeros((B, M), dtype=np.float64)
+    omega_interp: list[PchipInterpolator] = []
+    omega_support: list[np.ndarray] = []
+    vg_interp: list[PchipInterpolator] = []
+    vg_support: list[np.ndarray] = []
+    n_negative_freq = 0
+    for ib, bid in enumerate(branch_ids):
+        mask = branch_id == bid
+        q_b = q_raw[mask]
+        f_b = f_thz[mask]
+        vg_b = vg_raw[mask]
+        order = np.argsort(q_b, kind="stable")
+        q_b = q_b[order]
+        f_b = f_b[order]
+        vg_b = vg_b[order]
+        q_b, f_b, vg_b = unique_samples(q_b, f_b, vg_b)
+        n_negative_freq += int(np.count_nonzero(f_b < 0))
+        omega_b = 2.0 * np.pi * 1e12 * np.maximum(f_b, 0.0)
+        om_interp, om_support = build_clamped_pchip(q_b, omega_b)
+        vg_i, vg_s = build_clamped_pchip(q_b, vg_b)
+        omega_tab[ib] = eval_clamped(om_interp, om_support, q_common)
+        vg_tab[ib] = eval_clamped(vg_i, vg_s, q_common)
+        omega_interp.append(om_interp)
+        omega_support.append(om_support)
+        vg_interp.append(vg_i)
+        vg_support.append(vg_s)
+    if branch_names is None:
+        branch_names = header_meta["branch_names"] or [f"B{bid}" for bid in branch_ids]
+    if degeneracy is None:
+        degeneracy = header_meta["degeneracy"] or [1.0] * B
+    if len(branch_names) != B or len(degeneracy) != B:
+        raise ValueError("branch_names/degeneracy count does not match inferred branch count")
+    mat = {
+        "name": material_name,
+        "source_file": str(file_path),
+        "branch_ids": np.asarray(branch_ids, dtype=np.int64),
+        "branch_names": list(branch_names),
+        "degeneracy": np.asarray(degeneracy, dtype=np.float64),
+        "B": B,
+        "q": q_common,
+        "qmax": float(q_common.max()),
+        "omega_tab": omega_tab,
+        "vg_tab": vg_tab,
+        "frequency_THz_tab": omega_tab / (2.0 * np.pi * 1e12),
+        "n_negative_freq_entries": n_negative_freq,
+        "omega_interp": omega_interp,
+        "omega_support": omega_support,
+        "vg_interp": vg_interp,
+        "vg_support": vg_support,
+    }
+    return mat
+
+
+def mat_silicon_100(file_path: str | Path | None = None) -> dict[str, Any]:
+    if file_path is None:
+        file_path = resolve_input_dir() / "phonon_dispersion_Si.txt"
+    mat = mat_from_phonon_dispersion_file(
+        file_path=file_path,
+        material_name="Silicon (100)",
+        branch_names=["LA", "TA", "LO", "TO"],
+        degeneracy=[1, 2, 1, 2],
+    )
+    mat["a0"] = 5.431e-10
+    mat["crystal_orientation"] = "100"
+    return mat
+
+
+def mat_igzo(file_path: str | Path | None = None) -> dict[str, Any]:
+    if file_path is None:
+        file_path = resolve_input_dir() / "phonon_dispersion_IGZO.txt"
+    return mat_from_phonon_dispersion_file(file_path=file_path, material_name="IGZO")
+
+
+def material_eval_omega(mat: dict[str, Any], branch_index: int, q_values: np.ndarray) -> np.ndarray:
+    return eval_clamped(mat["omega_interp"][branch_index], mat["omega_support"][branch_index], q_values)
+
+
+def material_eval_vg(mat: dict[str, Any], branch_index: int, q_values: np.ndarray) -> np.ndarray:
+    return eval_clamped(mat["vg_interp"][branch_index], mat["vg_support"][branch_index], q_values)
+
+
+def build_branch_lookup(spec: dict[str, Any], branch_index: int) -> dict[str, Any]:
+    qv = np.asarray(spec["si"]["q"], dtype=np.float64)
+    wv = np.maximum(np.asarray(spec["si"]["omega_tab"][branch_index], dtype=np.float64), 0.0)
+    gv = np.asarray(spec["si"]["vg_tab"][branch_index], dtype=np.float64)
+    order = np.argsort(wv, kind="stable")
+    w_sorted = wv[order]
+    q_sorted = qv[order]
+    v_sorted = gv[order]
+    keep = np.ones(w_sorted.size, dtype=bool)
+    keep[1:] = np.diff(w_sorted) > 0
+    ws = w_sorted[keep]
+    qs = q_sorted[keep]
+    vs = v_sorted[keep]
+    w_to_q, ws_support = build_clamped_pchip(ws, qs)
+    q_to_v, qs_support = build_clamped_pchip(qs, vs)
+    return {
+        "ws": ws_support,
+        "qs": qs_support,
+        "vs": vs,
+        "w_to_q": w_to_q,
+        "q_to_v": q_to_v,
+    }
+
+
+def build_spectral_grid(mat: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
+    if opts.get("T0") is None:
+        raise ValueError("opts.T0 must be provided before build_spectral_grid")
+    T0 = float(opts["T0"])
+    Mq = int(get_or(opts, "n_q", 5000))
+    Nw = int(get_or(opts, "n_w", 1000))
+    weight_by_cv = bool(get_or(opts, "weight_by_Cv_for_Q", True))
+    q_edges = np.linspace(0.0, float(mat["qmax"]), Mq + 1)
+    q_mid = 0.5 * (q_edges[:-1] + q_edges[1:])
+    dq = np.diff(q_edges)
+    branches = list(mat["branch_names"])
+    deg = np.asarray(mat["degeneracy"], dtype=np.float64)
+    B = len(branches)
+    omega = np.zeros((B, Mq), dtype=np.float64)
+    vg = np.zeros((B, Mq), dtype=np.float64)
+    Cv = np.zeros((B, Mq), dtype=np.float64)
+    for b in range(B):
+        w_b = np.maximum(material_eval_omega(mat, b, q_mid), 0.0)
+        vg_b = material_eval_vg(mat, b, q_mid)
+        x = HBAR * w_b / (K_B * T0)
+        ex = np.exp(np.minimum(x, 700.0))
+        nbar = 1.0 / np.maximum(ex - 1.0, REALMIN)
+        dndT = (HBAR * w_b / (K_B * (T0**2))) * nbar * (nbar + 1.0)
+        dos_q = (deg[b] / (2.0 * np.pi**2)) * (q_mid**2) * dq
+        omega[b] = w_b
+        vg[b] = vg_b
+        Cv[b] = (HBAR * w_b) * dndT * dos_q
+    face_weight = np.abs(vg) * Cv
+    vol_weight = Cv if weight_by_cv else np.ones_like(Cv)
+    wf = face_weight.reshape(-1, order="F")
+    wv = vol_weight.reshape(-1, order="F")
+    cdf_face = np.cumsum(wf)
+    if cdf_face.size and cdf_face[-1] > 0:
+        cdf_face /= cdf_face[-1]
+    else:
+        cdf_face[:] = 0.0
+    cdf_vol = np.cumsum(wv)
+    if cdf_vol.size and cdf_vol[-1] > 0:
+        cdf_vol /= cdf_vol[-1]
+    else:
+        cdf_vol[:] = 0.0
+    wtab_all = np.maximum(np.asarray(mat["omega_tab"], dtype=np.float64), 0.0)
+    wmin = max(0.0, float(np.min(wtab_all)))
+    wmax = float(np.max(wtab_all))
+    if not np.isfinite(wmin) or not np.isfinite(wmax) or wmax <= wmin:
+        wmin, wmax = 0.0, 1.0
+    w_edges = np.linspace(wmin, wmax, Nw + 1)
+    w_mid_1 = 0.5 * (w_edges[:-1] + w_edges[1:])
+    dw = np.diff(w_edges)
+    w_mid = np.tile(w_mid_1.reshape(1, -1), (B, 1))
+    DOS_w_b = np.zeros((B, Nw), dtype=np.float64)
+    vg_w = np.zeros((B, Nw), dtype=np.float64)
+    qtab = np.asarray(mat["q"], dtype=np.float64)
+    for b in range(B):
+        wtab = np.maximum(np.asarray(mat["omega_tab"][b], dtype=np.float64), 0.0)
+        vgtab = np.abs(np.asarray(mat["vg_tab"][b], dtype=np.float64))
+        d = np.diff(wtab)
+        brk = [0]
+        for i in range(1, d.size):
+            if d[i - 1] * d[i] < 0 or d[i - 1] == 0.0 or d[i] == 0.0:
+                brk.append(i)
+        brk.append(wtab.size - 1)
+        Wsum = np.zeros(Nw, dtype=np.float64)
+        Vsum = np.zeros(Nw, dtype=np.float64)
+        for s in range(len(brk) - 1):
+            i1, i2 = brk[s], brk[s + 1]
+            if i2 - i1 < 2:
+                continue
+            qseg = qtab[i1 : i2 + 1]
+            wseg = wtab[i1 : i2 + 1]
+            unique_w, idx = np.unique(wseg, return_index=True)
+            if unique_w.size < 2:
+                continue
+            qseg_u = qseg[idx]
+            wlo, whi = float(unique_w.min()), float(unique_w.max())
+            mask = (w_mid_1 >= wlo) & (w_mid_1 <= whi)
+            if not np.any(mask):
+                continue
+            wq = w_mid_1[mask]
+            q_of_w = np.interp(wq, unique_w, qseg_u)
+            vg_at_q = np.abs(np.interp(q_of_w, qtab, vgtab))
+            vg_at_q = np.maximum(vg_at_q, 1e-6)
+            q2 = q_of_w * q_of_w
+            Wsum[mask] += q2 / vg_at_q
+            Vsum[mask] += q2
+        DOS_w_b[b] = (deg[b] / (2.0 * np.pi**2)) * Wsum
+        nz = Wsum > 0
+        vg_w[b, nz] = Vsum[nz] / Wsum[nz]
+    DOS_w = DOS_w_b.sum(axis=0)
+    xw = HBAR * w_mid_1 / (K_B * T0)
+    n_w1 = 1.0 / np.maximum(np.exp(np.minimum(xw, 700.0)) - 1.0, REALMIN)
+    N_w = DOS_w_b * (n_w1 * dw).reshape(1, -1)
+    spec = {
+        "si": mat,
+        "T0": T0,
+        "q_edges": q_edges,
+        "q_mid": q_mid,
+        "dq": dq,
+        "qmax": float(mat["qmax"]),
+        "branches": branches,
+        "deg": deg,
+        "B": B,
+        "M": Mq,
+        "omega": omega,
+        "vg": vg,
+        "Cv": Cv,
+        "Cv_tot": float(Cv.sum()),
+        "face_weight": face_weight,
+        "vol_weight": vol_weight,
+        "cdf_face": cdf_face,
+        "cdf_vol": cdf_vol,
+        "vg_max": float(np.max(np.abs(vg))) if vg.size else 0.0,
+        "w_edges": w_edges,
+        "w_mid": w_mid,
+        "dw": dw,
+        "DOS_w": DOS_w,
+        "DOS_w_b": DOS_w_b,
+        "N_w": N_w,
+        "N_w_tot": float(N_w.sum()),
+        "vg_w": vg_w,
+    }
+    spec["branch_lookups"] = [build_branch_lookup(spec, b) for b in range(B)]
+    spec["branch_is_la"] = np.array([("LA" in name.upper().replace(" ", "")) for name in branches], dtype=np.bool_)
+    spec["branch_is_ta"] = np.array([("TA" in name.upper().replace(" ", "")) for name in branches], dtype=np.bool_)
+    spec["branch_is_loto"] = np.array(
+        [(("LO" in name.upper().replace(" ", "")) or ("TO" in name.upper().replace(" ", ""))) for name in branches],
+        dtype=np.bool_,
+    )
+    b_ta = next((i for i, name in enumerate(branches) if "TA" in name.upper().replace(" ", "")), 1 if B > 1 else 0)
+    spec["omega_cut_ta"] = float(material_eval_omega(mat, b_ta, np.array([0.5 * spec["qmax"]], dtype=np.float64))[0])
+    return spec
+
+
+def build_E_T_lookup(spec: dict[str, Any], cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = cfg or {}
+    T_min = float(get_or(cfg, "T_min", 1.0))
+    T_max = float(get_or(cfg, "T_max", 2000.0))
+    nT = int(get_or(cfg, "nT", 2001))
+    T = np.linspace(T_min, T_max, nT, dtype=np.float64)
+    DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
+    w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
+    dw = ensure_2d_dw(spec)
+    x = (HBAR * w[np.newaxis, :, :]) / (K_B * T[:, np.newaxis, np.newaxis])
+    nbe = 1.0 / np.maximum(np.exp(np.minimum(x, 700.0)) - 1.0, REALMIN)
+    dE = DOS[np.newaxis, :, :] * (HBAR * w[np.newaxis, :, :]) * nbe * dw[np.newaxis, :, :]
+    Ub = dE.sum(axis=2)
+    U = Ub.sum(axis=1)
+    U_mono = np.maximum.accumulate(U)
+    keep = np.ones(U_mono.size, dtype=bool)
+    keep[1:] = np.diff(U_mono) > 0
+    if np.count_nonzero(keep) < 2:
+        keep[:] = True
+    U_unique = U_mono[keep]
+    T_unique = T[keep]
+    inv_interp = PchipInterpolator(U_unique, T_unique, extrapolate=True)
+    U_interp = PchipInterpolator(T, U, extrapolate=True)
+    lut = {
+        "T": T,
+        "U": U,
+        "Ub": Ub,
+        "U_mono": U_unique,
+        "T_mono": T_unique,
+        "inv_interp": inv_interp,
+        "U_interp": U_interp,
+        "inv": lambda Utarget: np.asarray(inv_interp(np.clip(np.asarray(Utarget, dtype=np.float64), U_unique[0], U_unique[-1]))),
+    }
+    if np.isfinite(get_or(cfg, "Tref", np.nan)):
+        tref = float(cfg["Tref"])
+        lut["Uref"] = float(U_interp(np.clip(tref, T[0], T[-1])))
+    return lut
+
+
+def build_q_T_lookup(spec: dict[str, Any], cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = cfg or {}
+    T_min = float(get_or(cfg, "T_min", 1.0))
+    T_max = float(get_or(cfg, "T_max", 2000.0))
+    nT = int(get_or(cfg, "nT", 2001))
+    T = np.linspace(T_min, T_max, nT, dtype=np.float64)
+    DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
+    w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
+    dw = ensure_2d_dw(spec)
+    vg = np.maximum(np.asarray(spec["vg_w"], dtype=np.float64), 0.0)
+    x = (HBAR * w[np.newaxis, :, :]) / (K_B * T[:, np.newaxis, np.newaxis])
+    nbe = 1.0 / np.maximum(np.exp(np.minimum(x, 700.0)) - 1.0, REALMIN)
+    dq = 0.25 * DOS[np.newaxis, :, :] * vg[np.newaxis, :, :] * (HBAR * w[np.newaxis, :, :]) * nbe * dw[np.newaxis, :, :]
+    qb = dq.sum(axis=2)
+    q = qb.sum(axis=1)
+    q_mono = np.maximum.accumulate(q)
+    keep = np.ones(q_mono.size, dtype=bool)
+    keep[1:] = np.diff(q_mono) > 0
+    if np.count_nonzero(keep) < 2:
+        keep[:] = True
+    q_unique = q_mono[keep]
+    T_unique = T[keep]
+    inv_interp = PchipInterpolator(q_unique, T_unique, extrapolate=True)
+    q_interp = PchipInterpolator(T, q, extrapolate=True)
+    return {
+        "T": T,
+        "q": q,
+        "qb": qb,
+        "inv_interp": inv_interp,
+        "q_interp": q_interp,
+        "inv": lambda qtar: np.asarray(inv_interp(np.clip(np.asarray(qtar, dtype=np.float64), q_unique[0], q_unique[-1]))),
+    }
+
+
+def infer_Nc(mesh: dict[str, Any]) -> int:
+    if mesh.get("Nc") is not None:
+        return int(mesh["Nc"])
+    if all(k in mesh for k in ("Nx", "Ny", "Nz")):
+        return int(mesh["Nx"] * mesh["Ny"] * mesh["Nz"])
+    if mesh.get("boxes") is not None:
+        return int(np.asarray(mesh["boxes"]).shape[0])
+    raise ValueError("cannot infer Nc from mesh")
+
+
+def cell_volumes(mesh: dict[str, Any]) -> np.ndarray:
+    if "cell_vol" in mesh and mesh["cell_vol"] is not None:
+        return np.asarray(mesh["cell_vol"], dtype=np.float64).reshape(-1)
+    if all(k in mesh for k in ("x_edges", "y_edges", "z_edges", "Nx", "Ny", "Nz")):
+        dx = np.diff(np.asarray(mesh["x_edges"], dtype=np.float64))
+        dy = np.diff(np.asarray(mesh["y_edges"], dtype=np.float64))
+        dz = np.diff(np.asarray(mesh["z_edges"], dtype=np.float64))
+        DX, DY, DZ = np.meshgrid(dx, dy, dz, indexing="ij")
+        return (DX * DY * DZ).ravel(order="F")
+    if "boxes" in mesh and mesh["boxes"] is not None:
+        boxes = np.asarray(mesh["boxes"], dtype=np.float64)
+        return (boxes[:, 1] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 2]) * (boxes[:, 5] - boxes[:, 4])
+    raise ValueError("mesh lacks cell volume information")
+
+
+def enhance_factor_array(opts: dict[str, Any], Nc: int) -> np.ndarray:
+    af = get_or(opts, "enhance_factor", 1.0)
+    if np.isscalar(af):
+        return np.full(Nc, float(af), dtype=np.float64)
+    af_arr = np.asarray(af, dtype=np.float64).reshape(-1)
+    if af_arr.size != Nc:
+        raise ValueError("enhance_factor must be scalar or Nc-by-1")
+    return af_arr
+
+
+def q_vabs_from_w_table(spec: dict[str, Any], w: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    w = np.asarray(w, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.int64).reshape(-1)
+    q = np.zeros_like(w)
+    vabs = np.zeros_like(w)
+    if w.size == 0:
+        return q, vabs
+    for branch in np.unique(b):
+        mask = b == branch
+        lookup = spec["branch_lookups"][int(branch) - 1]
+        w_branch = np.clip(w[mask], lookup["ws"][0], lookup["ws"][-1])
+        q_branch = np.asarray(lookup["w_to_q"](w_branch), dtype=np.float64)
+        q_branch = np.clip(q_branch, lookup["qs"][0], lookup["qs"][-1])
+        v_branch = np.asarray(lookup["q_to_v"](q_branch), dtype=np.float64)
+        q[mask] = q_branch
+        vabs[mask] = np.abs(v_branch)
+    return q, vabs
+
+
+def uniform_positions_in_cells(mesh: dict[str, Any], cell_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    cell_ids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
+    if cell_ids.size == 0:
+        z = np.zeros(0, dtype=np.float64)
+        return z.copy(), z.copy(), z.copy()
+    epsl = 1e-12
+    if all(k in mesh for k in ("Nx", "Ny", "Nz", "x_edges", "y_edges", "z_edges")):
+        ix, iy, iz = ind2sub(mesh["Nx"], mesh["Ny"], mesh["Nz"], cell_ids)
+        X = np.asarray(mesh["x_edges"], dtype=np.float64)
+        Y = np.asarray(mesh["y_edges"], dtype=np.float64)
+        Z = np.asarray(mesh["z_edges"], dtype=np.float64)
+        rx = np.random.random(cell_ids.size)
+        ry = np.random.random(cell_ids.size)
+        rz = np.random.random(cell_ids.size)
+        x = X[ix - 1] + (X[ix] - X[ix - 1]) * rx
+        y = Y[iy - 1] + (Y[iy] - Y[iy - 1]) * ry
+        z = Z[iz - 1] + (Z[iz] - Z[iz - 1]) * rz
+        x = np.clip(x, X[ix - 1] + epsl, X[ix] - epsl)
+        y = np.clip(y, Y[iy - 1] + epsl, Y[iy] - epsl)
+        z = np.clip(z, Z[iz - 1] + epsl, Z[iz] - epsl)
+        return x, y, z
+    if "boxes" in mesh:
+        boxes = np.asarray(mesh["boxes"], dtype=np.float64)[cell_ids - 1]
+        rnd = np.random.random((cell_ids.size, 3))
+        x = boxes[:, 0] + (boxes[:, 1] - boxes[:, 0]) * rnd[:, 0]
+        y = boxes[:, 2] + (boxes[:, 3] - boxes[:, 2]) * rnd[:, 1]
+        z = boxes[:, 4] + (boxes[:, 5] - boxes[:, 4]) * rnd[:, 2]
+        x = np.clip(x, boxes[:, 0] + epsl, boxes[:, 1] - epsl)
+        y = np.clip(y, boxes[:, 2] + epsl, boxes[:, 3] - epsl)
+        z = np.clip(z, boxes[:, 4] + epsl, boxes[:, 5] - epsl)
+        return x, y, z
+    raise ValueError("mesh does not provide usable cell geometry")
+
+
+def load_initial_temperature_field(mesh: dict[str, Any], opts: dict[str, Any], default_T: float | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    Nc = infer_Nc(mesh)
+    if default_T is None or not np.isfinite(default_T):
+        Tcell = np.full(Nc, np.nan, dtype=np.float64)
+    else:
+        Tcell = np.full(Nc, float(default_T), dtype=np.float64)
+    meta = {"source": "", "used_file": False, "T_min": np.nan, "T_mean": np.nan, "T_max": np.nan}
+    filepath = get_or(opts, "initial_temperature_file", "")
+    if not filepath:
+        if np.any(~np.isfinite(Tcell)):
+            raise ValueError("missing initial_temperature_file and no default_T provided")
+        meta["T_min"] = float(Tcell.min())
+        meta["T_mean"] = float(Tcell.mean())
+        meta["T_max"] = float(Tcell.max())
+        return Tcell, meta
+    data = read_numeric_matrix(filepath, delimiter=",")
+    if data.shape[1] < 4:
+        raise ValueError(f"{filepath} must have four columns")
+    idx = np.round(data[:, 0]).astype(np.int64)
+    idy = np.round(data[:, 1]).astype(np.int64)
+    idz = np.round(data[:, 2]).astype(np.int64)
+    temp = data[:, 3].astype(np.float64)
+    if np.any((idx < 1) | (idx > mesh["Nx"]) | (idy < 1) | (idy > mesh["Ny"]) | (idz < 1) | (idz > mesh["Nz"])):
+        raise ValueError(f"indices in {filepath} exceed mesh bounds")
+    lin = sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], idx, idy, idz)
+    if np.unique(lin).size != lin.size:
+        raise ValueError(f"duplicate cell indices found in {filepath}")
+    Tcell[lin - 1] = temp
+    if np.any(~np.isfinite(Tcell)):
+        raise ValueError(f"{filepath} does not cover all mesh cells")
+    meta["source"] = str(as_path(filepath))
+    meta["used_file"] = True
+    meta["T_min"] = float(Tcell.min())
+    meta["T_mean"] = float(Tcell.mean())
+    meta["T_max"] = float(Tcell.max())
+    return Tcell, meta
+
+
+def load_reference_temperature_field(mesh: dict[str, Any], opts: dict[str, Any], default_Tref: float | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    Nc = infer_Nc(mesh)
+    if default_Tref is None or not np.isfinite(default_Tref):
+        Tref = np.full(Nc, np.nan, dtype=np.float64)
+    else:
+        Tref = np.full(Nc, float(default_Tref), dtype=np.float64)
+    meta = {"source": "", "used_file": False, "T_min": np.nan, "T_mean": np.nan, "T_max": np.nan}
+    filepath = get_or(opts, "reference_temperature_file", "")
+    if not filepath:
+        if np.any(~np.isfinite(Tref)):
+            raise ValueError("missing reference_temperature_file and no default_Tref provided")
+        meta["T_min"] = float(Tref.min())
+        meta["T_mean"] = float(Tref.mean())
+        meta["T_max"] = float(Tref.max())
+        return Tref, meta
+    data = read_numeric_matrix(filepath, delimiter=",")
+    if data.shape[1] < 4:
+        raise ValueError(f"{filepath} must have four columns")
+    idx = np.round(data[:, 0]).astype(np.int64)
+    idy = np.round(data[:, 1]).astype(np.int64)
+    idz = np.round(data[:, 2]).astype(np.int64)
+    tref = data[:, 3].astype(np.float64)
+    if idx.size == 0:
+        raise ValueError(f"{filepath} contains no valid numeric rows")
+    if np.any((idx < 1) | (idx > mesh["Nx"]) | (idy < 1) | (idy > mesh["Ny"]) | (idz < 1) | (idz > mesh["Nz"])):
+        raise ValueError(f"indices in {filepath} exceed mesh bounds")
+    lin = sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], idx, idy, idz)
+    if np.unique(lin).size != lin.size:
+        raise ValueError(f"duplicate cell indices found in {filepath}")
+    Tref[lin - 1] = tref
+    if np.any(~np.isfinite(Tref)):
+        raise ValueError(f"{filepath} does not cover all mesh cells")
+    meta["source"] = str(as_path(filepath))
+    meta["used_file"] = True
+    meta["T_min"] = float(Tref.min())
+    meta["T_mean"] = float(Tref.mean())
+    meta["T_max"] = float(Tref.max())
+    return Tref, meta
+
+
+def load_volume_heat_source_field(mesh: dict[str, Any], opts: dict[str, Any], default_qvol: float | np.ndarray = 0.0) -> tuple[np.ndarray, dict[str, Any]]:
+    Nc = infer_Nc(mesh)
+    if np.isscalar(default_qvol):
+        qvol = np.full(Nc, float(default_qvol), dtype=np.float64)
+    else:
+        qvol = np.asarray(default_qvol, dtype=np.float64).reshape(-1)
+        if qvol.size != Nc:
+            raise ValueError("default_qvol must be scalar or Nc-by-1")
+    meta = {"source": "", "used_file": False, "q_min": float(qvol.min()), "q_mean": float(qvol.mean()), "q_max": float(qvol.max())}
+    filepath = get_or(opts, "volume_heat_source_file", "")
+    if not filepath:
+        return qvol, meta
+    data = read_numeric_matrix(filepath, delimiter=",")
+    if data.shape[1] < 4:
+        raise ValueError(f"{filepath} must have four columns")
+    idx = np.round(data[:, 0]).astype(np.int64)
+    idy = np.round(data[:, 1]).astype(np.int64)
+    idz = np.round(data[:, 2]).astype(np.int64)
+    qsrc = data[:, 3].astype(np.float64)
+    if idx.size == 0:
+        raise ValueError(f"{filepath} contains no valid numeric rows")
+    if np.any((idx < 1) | (idx > mesh["Nx"]) | (idy < 1) | (idy > mesh["Ny"]) | (idz < 1) | (idz > mesh["Nz"])):
+        raise ValueError(f"indices in {filepath} exceed mesh bounds")
+    lin = sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], idx, idy, idz)
+    if np.unique(lin).size != lin.size:
+        raise ValueError(f"duplicate cell indices found in {filepath}")
+    qvol[lin - 1] = qsrc
+    if lin.size != Nc:
+        raise ValueError(f"{filepath} does not cover all mesh cells")
+    meta["source"] = str(as_path(filepath))
+    meta["used_file"] = True
+    meta["q_min"] = float(qvol.min())
+    meta["q_mean"] = float(qvol.mean())
+    meta["q_max"] = float(qvol.max())
+    return qvol, meta
+
+
+def monitor_plane(bounds: np.ndarray) -> tuple[str, float, float]:
+    tol = 1e-15 * max(1.0, float(np.max(np.abs(bounds))))
+    fixed = np.array([abs(bounds[1] - bounds[0]) <= tol, abs(bounds[3] - bounds[2]) <= tol, abs(bounds[5] - bounds[4]) <= tol])
+    if np.count_nonzero(fixed) != 1:
+        raise ValueError("each monitor must define exactly one plane coordinate")
+    if fixed[0]:
+        return "x", float(0.5 * (bounds[0] + bounds[1])), float(max(bounds[3] - bounds[2], 0.0) * max(bounds[5] - bounds[4], 0.0))
+    if fixed[1]:
+        return "y", float(0.5 * (bounds[2] + bounds[3])), float(max(bounds[1] - bounds[0], 0.0) * max(bounds[5] - bounds[4], 0.0))
+    return "z", float(0.5 * (bounds[4] + bounds[5])), float(max(bounds[1] - bounds[0], 0.0) * max(bounds[3] - bounds[2], 0.0))
+
+
+def load_heat_flux_monitors(mesh: dict[str, Any], output_cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    filepath = output_cfg.get("heat_flux_monitor_file", "")
+    warnings: list[str] = []
+    monitors: list[dict[str, Any]] = []
+    if not filepath:
+        return monitors, warnings
+    path = Path(filepath)
+    if not path.is_file():
+        warnings.append(f"heat flux monitor file not found: {filepath}")
+        return monitors, warnings
+    length_scale = float(get_or(output_cfg, "monitor_length_scale", 1.0))
+    for i, line in enumerate(read_clean_lines(path), start=1):
+        tokens = [tok for tok in re.split(r"[\s,]+", line) if tok]
+        if len(tokens) < 7:
+            raise ValueError(f"invalid monitor line: {line}")
+        bounds_input = np.asarray([float(v) for v in tokens[:6]], dtype=np.float64)
+        requested_direction = tokens[6].upper()
+        label = tokens[7] if len(tokens) >= 8 else f"monitor_{i:03d}"
+        bounds = bounds_input * length_scale
+        axis, coord, area = monitor_plane(bounds)
+        sign_char = "-" if requested_direction.startswith("-") else "+"
+        effective_normal = f"{sign_char}{axis.upper()}"
+        warning_msg = ""
+        if len(requested_direction) >= 2 and requested_direction[-1].upper() != axis.upper():
+            warning_msg = (
+                f'monitor "{label}": requested direction {requested_direction} does not match plane normal axis '
+                f'{axis.upper()}; using {sign_char}{axis.upper()}.'
+            )
+            warnings.append(warning_msg)
+        domain_box = np.asarray(mesh.get("domain_box", np.zeros(6)), dtype=np.float64)
+        if domain_box.size == 6:
+            inside = (
+                bounds[0] >= domain_box[0]
+                and bounds[1] <= domain_box[1]
+                and bounds[2] >= domain_box[2]
+                and bounds[3] <= domain_box[3]
+                and bounds[4] >= domain_box[4]
+                and bounds[5] <= domain_box[5]
+            )
+            if not inside:
+                extra = f'monitor "{label}" extends outside domain bounds.'
+                warnings.append(extra)
+                warning_msg = extra if not warning_msg else f"{warning_msg} | {extra}"
+        monitors.append(
+            {
+                "id": i,
+                "label": label,
+                "bounds_input": bounds_input,
+                "bounds": bounds,
+                "requested_direction": requested_direction,
+                "axis": axis,
+                "coord": coord,
+                "area": area,
+                "effective_normal": effective_normal,
+                "warning": warning_msg,
+                "raw": line,
+            }
+        )
+    return monitors, warnings
+
+
+def sample_particles_for_cells(
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    opts: dict[str, Any],
+    cell_ids: np.ndarray,
+    Tcell: np.ndarray,
+    Tref_cell: np.ndarray | None = None,
+    id_start: int = 0,
+) -> tuple[ParticleBlock, dict[str, Any]]:
+    cell_ids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
+    Tcell = np.asarray(Tcell, dtype=np.float64).reshape(-1)
+    Tref_cell = np.zeros(0, dtype=np.float64) if Tref_cell is None else np.asarray(Tref_cell, dtype=np.float64).reshape(-1)
+    info = {
+        "cell_ids": cell_ids.copy(),
+        "Nexp_tot": 0.0,
+        "Nsp_tot": 0,
+        "target_temperature": Tcell.copy(),
+        "reference_temperature": Tref_cell.copy(),
+    }
+    if cell_ids.size == 0:
+        return ParticleBlock.empty(), info
+    mode_name = str(get_or(opts, "mode", "absolute"))
+    if Tcell.size != cell_ids.size:
+        raise ValueError("Tcell size must match cell_ids")
+    if mode_name.lower() == "deviational" and Tref_cell.size != cell_ids.size:
+        raise ValueError("Tref_cell size must match cell_ids in deviational mode")
+    E_eff = float(get_or(opts, "E_eff", 1e-18))
+    use_bin_center_w = bool(get_or(opts, "use_bin_center_w", True))
+    max_particles = int(get_or(opts, "max_particles", np.iinfo(np.int64).max))
+    Vc_all = cell_volumes(mesh)
+    af_all = enhance_factor_array(opts, Vc_all.size)
+    Vc = Vc_all[cell_ids - 1]
+    af = af_all[cell_ids - 1]
+    B, Nw = spec["w_mid"].shape
+    dw = ensure_2d_dw(spec)
+    pref = HBAR * np.asarray(spec["w_mid"], dtype=np.float64) * np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0) * dw
+    nloc = cell_ids.size
+    mode_weight = np.zeros((B * Nw, nloc), dtype=np.float64)
+    mode_sign = np.ones((B * Nw, nloc), dtype=np.int8)
+    U_density_cell = np.zeros(nloc, dtype=np.float64)
+    for i in range(nloc):
+        n_cell = bose_occupation(spec["w_mid"], Tcell[i])
+        if mode_name.lower() == "deviational":
+            n_ref = bose_occupation(spec["w_mid"], Tref_cell[i])
+            Wbm = pref * (n_cell - n_ref)
+        else:
+            Wbm = pref * n_cell
+        mode_weight[:, i] = np.abs(Wbm).ravel(order="F")
+        if mode_name.lower() == "deviational":
+            s = np.sign(Wbm).ravel(order="F")
+            s[s == 0] = 1
+            mode_sign[:, i] = s.astype(np.int8)
+        U_density_cell[i] = float(Wbm.sum())
+    mode_energy_abs = mode_weight.sum(axis=0)
+    cell_weight = mode_energy_abs * Vc * af
+    total_weight = float(cell_weight.sum())
+    if total_weight <= 0:
+        return ParticleBlock.empty(), info
+    Nexp_tot = total_weight / E_eff
+    Nsp_tot = int(np.floor(Nexp_tot) + (np.random.random() < (Nexp_tot - np.floor(Nexp_tot))))
+    info["Nexp_tot"] = float(Nexp_tot)
+    info["Nsp_tot"] = int(Nsp_tot)
+    if Nsp_tot <= 0:
+        return ParticleBlock.empty(), info
+    if Nsp_tot > max_particles:
+        raise ValueError(f"expected particles {Nsp_tot:g} exceed max_particles {max_particles:g}")
+    cdf_cell = np.cumsum(cell_weight) / total_weight
+    cell_pick = np.searchsorted(cdf_cell, np.random.random(Nsp_tot), side="left")
+    cell_pick = np.clip(cell_pick, 0, nloc - 1)
+    idx_pick = np.zeros(Nsp_tot, dtype=np.int64)
+    mode_cdf = np.zeros_like(mode_weight)
+    positive = mode_energy_abs > 0
+    mode_cdf[:, positive] = np.cumsum(mode_weight[:, positive], axis=0) / mode_energy_abs[positive]
+    for iloc in np.unique(cell_pick):
+        mask = cell_pick == iloc
+        draws = np.random.random(np.count_nonzero(mask))
+        idx_pick[mask] = np.searchsorted(mode_cdf[:, iloc], draws, side="left")
+    idx_pick = np.clip(idx_pick, 0, B * Nw - 1)
+    b = (idx_pick % B + 1).astype(np.int32)
+    m = (idx_pick // B + 1).astype(np.int32)
+    if use_bin_center_w or "w_edges" not in spec or len(spec["w_edges"]) != Nw + 1:
+        w = np.asarray(spec["w_mid"], dtype=np.float64)[b - 1, m - 1]
+    else:
+        w_lo = np.asarray(spec["w_edges"], dtype=np.float64)[m - 1]
+        w_hi = np.asarray(spec["w_edges"], dtype=np.float64)[m]
+        w = w_lo + (w_hi - w_lo) * np.random.random(Nsp_tot)
+    q, vabs = q_vabs_from_w_table(spec, w, b)
+    dirs = rand_unit_vec_batch(Nsp_tot)
+    E = np.full(Nsp_tot, E_eff, dtype=np.float64)
+    sgn = np.ones(Nsp_tot, dtype=np.int8)
+    if mode_name.lower() == "deviational":
+        sgn = mode_sign[idx_pick, cell_pick].astype(np.int8)
+        E = E_eff * sgn.astype(np.float64)
+    sampled_cells = cell_ids[cell_pick].astype(np.int32)
+    x, y, z = uniform_positions_in_cells(mesh, sampled_cells)
+    ids = np.arange(id_start + 1, id_start + Nsp_tot + 1, dtype=np.int64)
+    p = ParticleBlock(
+        id=ids,
+        par_id=ids.copy(),
+        cell=sampled_cells,
+        x=x,
+        y=y,
+        z=z,
+        b=b,
+        m=m,
+        w=w,
+        q=q,
+        vx=vabs * dirs[:, 0],
+        vy=vabs * dirs[:, 1],
+        vz=vabs * dirs[:, 2],
+        vabs=vabs,
+        E=E,
+        sgn=sgn,
+        n_ph=E / (HBAR * np.maximum(w, 1e-30)),
+        seed=np.random.randint(1, 2**31 - 1, size=Nsp_tot, dtype=np.int64),
+        t_left=np.zeros(Nsp_tot, dtype=np.float64),
+    )
+    return p, info
+
+
+def init_state_energy(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any]) -> SimulationState:
+    mode_name = str(get_or(opts, "mode", "absolute"))
+    default_T = float(opts["T_init"]) if np.isfinite(get_or(opts, "T_init", np.nan)) else float(get_or(opts, "T0", get_or(opts, "Tref", 300.0)))
+    Tcell, Tmeta = load_initial_temperature_field(mesh, opts, default_T)
+    default_Tref = float(get_or(opts, "Tref", np.nan))
+    if not np.isfinite(default_Tref):
+        default_Tref = float(np.mean(Tcell))
+    Tref_cell, Tref_meta = load_reference_temperature_field(mesh, opts, default_Tref)
+    cell_ids = np.arange(1, infer_Nc(mesh) + 1, dtype=np.int64)
+    p, sample_info = sample_particles_for_cells(mesh, spec, opts, cell_ids, Tcell, Tref_cell, 0)
+    Nsp_cell = np.bincount(p.cell.astype(np.int64) - 1, minlength=infer_Nc(mesh)).astype(np.int64) if len(p) else np.zeros(infer_Nc(mesh), dtype=np.int64)
+    Vc = cell_volumes(mesh)
+    Vdom = float(Vc.sum())
+    info = {
+        "mode": mode_name,
+        "Tref": float(get_or(opts, "Tref", get_or(opts, "T0", 300.0))),
+        "Tref_cell": Tref_cell,
+        "reference_temperature_meta": Tref_meta,
+        "T_init_cell": Tcell,
+        "initial_temperature_meta": Tmeta,
+        "U_density_mean": sample_info["Nexp_tot"] * float(get_or(opts, "E_eff", 1e-18)) / max(Vdom, REALMIN),
+        "U_total": sample_info["Nexp_tot"] * float(get_or(opts, "E_eff", 1e-18)),
+        "Nexp_tot": sample_info["Nexp_tot"],
+        "Nsp_tot": sample_info["Nsp_tot"],
+        "Nc": infer_Nc(mesh),
+        "Vdom": Vdom,
+    }
+    return SimulationState(
+        p=p,
+        WE=float(get_or(opts, "E_eff", 1e-18)),
+        Wp=float(get_or(opts, "E_eff", 1e-18)),
+        Nsp_cell=Nsp_cell,
+        enhance_factor=enhance_factor_array(opts, infer_Nc(mesh)),
+        info=info,
+    )
+
+
+def initial_temperature_from_state_or_file(state: SimulationState, mesh: dict[str, Any], opts: dict[str, Any], default_T: float) -> tuple[np.ndarray, dict[str, Any]]:
+    Nc = infer_Nc(mesh)
+    T_init = np.asarray(state.info.get("T_init_cell", np.zeros(0)), dtype=np.float64).reshape(-1)
+    if T_init.size == Nc:
+        meta = dict(state.info.get("initial_temperature_meta", {}))
+        meta["T_min"] = float(T_init.min())
+        meta["T_mean"] = float(T_init.mean())
+        meta["T_max"] = float(T_init.max())
+        return T_init.copy(), meta
+    return load_initial_temperature_field(mesh, opts, default_T)
+
+
+def reference_temperature_from_state(state: SimulationState, opts: dict[str, Any], Nc: int) -> np.ndarray:
+    Tref = np.asarray(state.info.get("Tref_cell", np.zeros(0)), dtype=np.float64).reshape(-1)
+    if Tref.size == Nc:
+        return Tref.copy()
+    opts_Tref = np.asarray(get_or(opts, "Tref_cell", np.zeros(0)), dtype=np.float64).reshape(-1)
+    if opts_Tref.size == Nc:
+        return opts_Tref.copy()
+    if np.isfinite(get_or(opts, "Tref", np.nan)):
+        return np.full(Nc, float(opts["Tref"]), dtype=np.float64)
+    raise ValueError("deviational mode requires Tref_cell or opts.Tref")
+
+
+def update_temperature_from_energy(
+    state: SimulationState,
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    opts: dict[str, Any],
+    lut: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if lut is None:
+        lut = build_E_T_lookup(spec, et_lookup_cfg_from_opts(opts))
+    Vc = cell_volumes(mesh)
+    Nc = Vc.size
+    if len(state.p) == 0:
+        Ecell = np.zeros(Nc, dtype=np.float64)
+    else:
+        valid = (state.p.cell >= 1) & (state.p.cell <= Nc)
+        Ecell = np.bincount(state.p.cell[valid].astype(np.int64) - 1, weights=state.p.E[valid], minlength=Nc).astype(np.float64)
+    Ulocal = np.zeros(Nc, dtype=np.float64)
+    mask = Vc > 0
+    Ulocal[mask] = Ecell[mask] / Vc[mask]
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+        Tref_cell = reference_temperature_from_state(state, opts, Nc)
+        Tref_clamped = np.clip(Tref_cell, lut["T"][0], lut["T"][-1])
+        Uref = np.asarray(lut["U_interp"](Tref_clamped), dtype=np.float64)
+        Uabs = Ulocal + Uref
+    else:
+        Uabs = Ulocal
+    Umin, Umax = float(lut["U_mono"][0]), float(lut["U_mono"][-1])
+    Ucl = np.clip(Uabs, Umin, Umax)
+    Tnew = np.asarray(lut["inv_interp"](Ucl), dtype=np.float64)
+    mode_str = "dev" if str(get_or(opts, "mode", "absolute")).lower() == "deviational" else "abs"
+    if Tnew.size:
+        print(
+            f"[temp-update:{mode_str}] Np={len(state.p)} | E_total={Ecell.sum():.6e} J | "
+            f"T[min,mean,max]=[{Tnew.min():.2f}, {Tnew.mean():.2f}, {Tnew.max():.2f}] K"
+        )
+    aux = {
+        "Ecell": Ecell,
+        "Vcell": Vc,
+        "Ulocal": Ulocal,
+        "Uabs": Uabs,
+        "clip_low": float(np.mean(Uabs < Umin)),
+        "clip_high": float(np.mean(Uabs > Umax)),
+        "LUT": lut,
+    }
+    return Tnew, aux
+
+
+def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(get_or(opts, "output", {}))
+    out_cfg = {
+        "enabled": bool(get_or(cfg, "enable", False)),
+        "every_n_steps": max(1, int(round(get_or(cfg, "every_n_steps", 100)))),
+        "run_dir": "",
+        "run_tag": "",
+        "inputs_dir": "",
+        "steps_dir": "",
+        "step_history_file": "",
+        "run_wallclock_tic": time.perf_counter(),
+        "monitors": [],
+        "monitor_warnings": [],
+        "cum_energy": np.zeros(0, dtype=np.float64),
+        "interval_energy": np.zeros(0, dtype=np.float64),
+        "cum_crossings_pos": np.zeros(0, dtype=np.float64),
+        "cum_crossings_neg": np.zeros(0, dtype=np.float64),
+        "interval_crossings_pos": np.zeros(0, dtype=np.float64),
+        "interval_crossings_neg": np.zeros(0, dtype=np.float64),
+        "cum_time": 0.0,
+        "interval_time": 0.0,
+    }
+    if not out_cfg["enabled"]:
+        return out_cfg
+    root_dir = Path(str(get_or(cfg, "root_dir", "output")))
+    run_tag = str(get_or(cfg, "run_tag", time.strftime("%Y%m%d_%H%M%S")))
+    run_dir = root_dir / f"run_{run_tag}"
+    suffix = 1
+    while run_dir.exists():
+        run_dir = root_dir / f"run_{run_tag}_{suffix:02d}"
+        suffix += 1
+    run_dir.mkdir(parents=True, exist_ok=True)
+    inputs_dir = run_dir / "inputs"
+    steps_dir = run_dir / "steps"
+    inputs_dir.mkdir(exist_ok=True)
+    steps_dir.mkdir(exist_ok=True)
+    monitors, warnings = load_heat_flux_monitors(mesh, cfg)
+    nmon = len(monitors)
+    out_cfg.update(
+        {
+            "run_dir": str(run_dir),
+            "run_tag": run_tag,
+            "inputs_dir": str(inputs_dir),
+            "steps_dir": str(steps_dir),
+            "step_history_file": str(run_dir / "step_history.txt"),
+            "monitors": monitors,
+            "monitor_warnings": warnings,
+            "cum_energy": np.zeros(nmon, dtype=np.float64),
+            "interval_energy": np.zeros(nmon, dtype=np.float64),
+            "cum_crossings_pos": np.zeros(nmon, dtype=np.float64),
+            "cum_crossings_neg": np.zeros(nmon, dtype=np.float64),
+            "interval_crossings_pos": np.zeros(nmon, dtype=np.float64),
+            "interval_crossings_neg": np.zeros(nmon, dtype=np.float64),
+        }
+    )
+    snapshot_specs = [
+        ("layout_ldg", mesh.get("layout", {}).get("source", "")),
+        ("grid_lgrid", mesh.get("grid", {}).get("source", "")),
+        ("initial_temperature", get_or(opts, "initial_temperature_file", "")),
+        ("reference_temperature", get_or(opts, "reference_temperature_file", "")),
+        ("volume_heat_source", get_or(opts, "volume_heat_source_file", "")),
+        ("solver_params", get_or(opts, "solver_param_file", "")),
+        ("heat_flux_monitors", get_or(cfg, "heat_flux_monitor_file", "")),
+    ]
+    manifest = [["kind", "source_path", "snapshot_path"]]
+    for kind, src in snapshot_specs:
+        if not src:
+            continue
+        src_path = Path(src)
+        if not src_path.is_file():
+            continue
+        dst = inputs_dir / f"{kind}__{src_path.name}"
+        shutil.copyfile(src_path, dst)
+        manifest.append([kind, str(src_path.resolve()), str(dst.resolve())])
+    write_csv_rows(inputs_dir / "input_manifest.txt", manifest)
+    write_csv_rows(out_cfg["step_history_file"], [["step", "dt_s", "elapsed_time_s", "interval_time_s", "wall_clock_elapsed_s", "Np", "T_min_K", "T_mean_K", "T_max_K"]])
+    write_csv_rows(
+        run_dir / "run_manifest.txt",
+        [
+            ["key", "value"],
+            ["run_tag", run_tag],
+            ["run_dir", str(run_dir.resolve())],
+            ["every_n_steps", out_cfg["every_n_steps"]],
+            ["heat_flux_monitor_file", str(get_or(cfg, "heat_flux_monitor_file", ""))],
+            ["monitor_length_scale", get_or(cfg, "monitor_length_scale", np.nan)],
+            ["created_at", time.strftime("%Y-%m-%d %H:%M:%S")],
+        ],
+    )
+    monitor_rows = [["label", "requested_direction", "effective_normal", "area_m2", "x0_in", "x1_in", "y0_in", "y1_in", "z0_in", "z1_in", "warning"]]
+    for mon in monitors:
+        b = mon["bounds_input"]
+        monitor_rows.append([mon["label"], mon["requested_direction"], mon["effective_normal"], mon["area"], b[0], b[1], b[2], b[3], b[4], b[5], mon["warning"]])
+    write_csv_rows(run_dir / "heat_flux_monitors_manifest.txt", monitor_rows)
+    if warnings:
+        write_csv_rows(run_dir / "heat_flux_monitor_warnings.txt", [[w] for w in warnings])
+    return out_cfg
+
+
+def write_periodic_output(
+    out_cfg: dict[str, Any],
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    state: SimulationState,
+    Tprime: np.ndarray,
+    step: int,
+    elapsed_time: float,
+    dt_step: float,
+) -> None:
+    if not out_cfg.get("enabled", False):
+        return
+    step_dir = Path(out_cfg["steps_dir"]) / f"step_{step:05d}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    wall_clock_elapsed = time.perf_counter() - out_cfg["run_wallclock_tic"]
+    I, J, K = np.meshgrid(np.arange(1, mesh["Nx"] + 1), np.arange(1, mesh["Ny"] + 1), np.arange(1, mesh["Nz"] + 1), indexing="ij")
+    temp_data = np.column_stack((I.ravel(order="F"), J.ravel(order="F"), K.ravel(order="F"), np.asarray(Tprime, dtype=np.float64).reshape(-1)))
+    write_csv_rows(step_dir / "temperature.txt", [["idxcell", "idycell", "idzcell", "Temperature"], *temp_data.tolist()])
+    branch_rows = [["branch_id", "branch_name", "superparticle_count", "phonon_count_net", "phonon_count_abs", "energy_net_J", "energy_abs_J"]]
+    if len(state.p) == 0:
+        for ib, name in enumerate(spec["branches"], start=1):
+            branch_rows.append([ib, name, 0, 0, 0, 0, 0])
+    else:
+        n_net = state.p.E / (HBAR * np.maximum(state.p.w, 1e-30))
+        n_abs = np.abs(state.p.E) / (HBAR * np.maximum(state.p.w, 1e-30))
+        for ib, name in enumerate(spec["branches"], start=1):
+            mask = state.p.b == ib
+            branch_rows.append([ib, name, int(np.count_nonzero(mask)), float(n_net[mask].sum()), float(n_abs[mask].sum()), float(state.p.E[mask].sum()), float(np.abs(state.p.E[mask]).sum())])
+    write_csv_rows(step_dir / "branch_stats.txt", branch_rows)
+    heat_rows = [["label", "requested_direction", "effective_normal", "area_m2", "elapsed_time_s", "interval_energy_net_J", "cumulative_energy_net_J", "flux_interval_W_m2", "flux_cumulative_W_m2", "interval_crossings_pos", "interval_crossings_neg", "cumulative_crossings_pos", "cumulative_crossings_neg", "warning"]]
+    for i, mon in enumerate(out_cfg["monitors"]):
+        flux_interval = np.nan
+        if out_cfg["interval_time"] > 0 and mon["area"] > 0:
+            flux_interval = out_cfg["interval_energy"][i] / (mon["area"] * out_cfg["interval_time"])
+        flux_cumulative = np.nan
+        if elapsed_time > 0 and mon["area"] > 0:
+            flux_cumulative = out_cfg["cum_energy"][i] / (mon["area"] * elapsed_time)
+        heat_rows.append([mon["label"], mon["requested_direction"], mon["effective_normal"], mon["area"], elapsed_time, out_cfg["interval_energy"][i], out_cfg["cum_energy"][i], flux_interval, flux_cumulative, out_cfg["interval_crossings_pos"][i], out_cfg["interval_crossings_neg"][i], out_cfg["cum_crossings_pos"][i], out_cfg["cum_crossings_neg"][i], mon["warning"]])
+    write_csv_rows(step_dir / "heat_flux.txt", heat_rows)
+    write_csv_rows(step_dir / "step_info.txt", [["step", "dt_s", "elapsed_time_s", "interval_time_s", "wall_clock_elapsed_s", "Np", "T_min_K", "T_mean_K", "T_max_K"], [step, dt_step, elapsed_time, out_cfg["interval_time"], wall_clock_elapsed, len(state.p), float(np.min(Tprime)), float(np.mean(Tprime)), float(np.max(Tprime))]])
+    with Path(out_cfg["step_history_file"]).open("a", encoding="utf-8") as f:
+        f.write(f"{step},{dt_step:.16g},{elapsed_time:.16g},{out_cfg['interval_time']:.16g},{wall_clock_elapsed:.16g},{len(state.p)},{float(np.min(Tprime)):.16g},{float(np.mean(Tprime)):.16g},{float(np.max(Tprime)):.16g}\n")
+
+
+def normal_key(normal_name: str) -> str:
+    mapping = {"+X": "xp", "-X": "xn", "+Y": "yp", "-Y": "yn", "+Z": "zp", "-Z": "zn"}
+    if normal_name.upper() not in mapping:
+        raise ValueError(f"invalid normal {normal_name}")
+    return mapping[normal_name.upper()]
+
+
+def opposite_normal(normal_name: str) -> str:
+    mapping = {"+X": "-X", "-X": "+X", "+Y": "-Y", "-Y": "+Y", "+Z": "-Z", "-Z": "+Z"}
+    return mapping[normal_name.upper()]
+
+
+def point_hits_rule(pt: np.ndarray, rule: dict[str, Any], tol: float) -> bool:
+    b = np.asarray(rule["bounds"], dtype=np.float64)
+    if rule["axis"] == "x":
+        return abs(pt[0] - rule["coord"]) <= tol and b[2] - tol <= pt[1] <= b[3] + tol and b[4] - tol <= pt[2] <= b[5] + tol
+    if rule["axis"] == "y":
+        return abs(pt[1] - rule["coord"]) <= tol and b[0] - tol <= pt[0] <= b[1] + tol and b[4] - tol <= pt[2] <= b[5] + tol
+    if rule["axis"] == "z":
+        return abs(pt[2] - rule["coord"]) <= tol and b[0] - tol <= pt[0] <= b[1] + tol and b[2] - tol <= pt[1] <= b[3] + tol
+    return False
+
+
+def normalize_action(mode_name: str) -> str:
+    name = mode_name.lower()
+    if name in {"pass", "open"}:
+        return "pass"
+    if name in {"reflect", "adiabatic"}:
+        return "reflect"
+    if name in {"catch", "absorb"}:
+        return "catch"
+    if name == "generate":
+        return "generate"
+    if name == "periodic":
+        return "periodic"
+    return "pass"
+
+
+def face_action(mesh: dict[str, Any], normal: str, pt: np.ndarray) -> str:
+    rules = mesh.get("face_rules", {}).get("by_normal", {}).get(normal_key(normal), [])
+    tol = 1e-12 * max(1.0, float(np.max(np.abs(pt))))
+    for rule in rules:
+        if point_hits_rule(pt, rule, tol):
+            return normalize_action(rule["mode"])
+    return "pass"
+
+
+def point_hits_monitor(pt: np.ndarray, mon: dict[str, Any]) -> bool:
+    b = np.asarray(mon["bounds"], dtype=np.float64)
+    tol = 1e-12 * max(1.0, float(np.max(np.abs(np.concatenate((pt, b))))))
+    if mon["axis"] == "x":
+        return abs(pt[0] - mon["coord"]) <= tol and b[2] - tol <= pt[1] <= b[3] + tol and b[4] - tol <= pt[2] <= b[5] + tol
+    if mon["axis"] == "y":
+        return abs(pt[1] - mon["coord"]) <= tol and b[0] - tol <= pt[0] <= b[1] + tol and b[4] - tol <= pt[2] <= b[5] + tol
+    if mon["axis"] == "z":
+        return abs(pt[2] - mon["coord"]) <= tol and b[0] - tol <= pt[0] <= b[1] + tol and b[2] - tol <= pt[1] <= b[3] + tol
+    return False
+
+
+def empty_heat_flux_stats(mesh: dict[str, Any]) -> dict[str, np.ndarray]:
+    nmon = len(mesh.get("heat_flux_monitors", []))
+    return {
+        "net_energy": np.zeros(nmon, dtype=np.float64),
+        "forward_energy": np.zeros(nmon, dtype=np.float64),
+        "backward_energy": np.zeros(nmon, dtype=np.float64),
+        "crossings_pos": np.zeros(nmon, dtype=np.float64),
+        "crossings_neg": np.zeros(nmon, dtype=np.float64),
+    }
+
+
+def merge_heat_flux_stats(stats: dict[str, np.ndarray], add_stats: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    if not add_stats:
+        return stats
+    for key in stats:
+        stats[key] = stats[key] + add_stats[key]
+    return stats
+
+
+def tally_heat_flux_crossing(stats: dict[str, np.ndarray], mesh: dict[str, Any], pt: np.ndarray, normal: str, packet_E: float) -> None:
+    for i, mon in enumerate(mesh.get("heat_flux_monitors", [])):
+        if not point_hits_monitor(pt, mon):
+            continue
+        if mon["effective_normal"].upper() == normal.upper():
+            sign = 1.0
+        elif opposite_normal(mon["effective_normal"]).upper() == normal.upper():
+            sign = -1.0
+        else:
+            sign = 0.0
+        if sign == 0.0:
+            continue
+        stats["net_energy"][i] += sign * packet_E
+        if sign > 0:
+            stats["forward_energy"][i] += packet_E
+            stats["crossings_pos"][i] += 1
+        else:
+            stats["backward_energy"][i] += packet_E
+            stats["crossings_neg"][i] += 1
+
+
+def next_particle_id(p: ParticleBlock) -> int:
+    return int(p.id.max()) if len(p) else 0
+
+
+def particles_total_energy(state: SimulationState, opts: dict[str, Any]) -> float:
+    if len(state.p):
+        return float(state.p.E.sum())
+    return float(get_or(opts, "E_eff", 1e-18) * 0.0)
+
+
+def collect_reservoir_cells(mesh: dict[str, Any]) -> np.ndarray:
+    cells = [res["cell_ids"] for res in mesh.get("reservoirs", []) if np.asarray(res["cell_ids"]).size]
+    if not cells:
+        return np.zeros(0, dtype=np.int64)
+    return np.unique(np.concatenate(cells).astype(np.int64))
+
+
+def refresh_reservoir_particles(state: SimulationState, mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any]) -> tuple[SimulationState, dict[str, Any]]:
+    info = {
+        "refreshed": False,
+        "cell_ids": np.zeros(0, dtype=np.int64),
+        "removed_particles": 0,
+        "added_particles": 0,
+        "target_temperature_cell": np.zeros(0, dtype=np.float64),
+        "reference_temperature_cell": np.zeros(0, dtype=np.float64),
+    }
+    cells = collect_reservoir_cells(mesh)
+    if cells.size == 0:
+        return state, info
+    Nc = infer_Nc(mesh)
+    target_T_all = np.asarray(state.info.get("reservoir_target_temperature_cell", state.info.get("T_init_cell", np.zeros(0))), dtype=np.float64).reshape(-1)
+    if target_T_all.size != Nc:
+        fallback_T = float(get_or(opts, "T0", get_or(opts, "Tref", 300.0)))
+        target_T_all, _ = load_initial_temperature_field(mesh, opts, fallback_T)
+    Tref_all = np.asarray(state.info.get("reservoir_reference_temperature_cell", state.info.get("Tref_cell", np.zeros(0))), dtype=np.float64).reshape(-1)
+    if Tref_all.size != Nc:
+        default_Tref = float(get_or(opts, "Tref", np.mean(target_T_all)))
+        Tref_all, _ = load_reference_temperature_field(mesh, opts, default_Tref)
+    keep_mask = np.ones(len(state.p), dtype=bool)
+    if len(state.p):
+        keep_mask = ~np.isin(state.p.cell.astype(np.int64), cells)
+    kept = state.p.take(keep_mask)
+    removed = int(len(state.p) - len(kept))
+    newp, sample_info = sample_particles_for_cells(mesh, spec, opts, cells, target_T_all[cells - 1], Tref_all[cells - 1], next_particle_id(kept))
+    state.p = kept.append(newp)
+    state.Nsp_cell = np.bincount(state.p.cell.astype(np.int64) - 1, minlength=Nc).astype(np.int64) if len(state.p) else np.zeros(Nc, dtype=np.int64)
+    mask = np.zeros(Nc, dtype=bool)
+    mask[cells - 1] = True
+    state.info["reservoir_cell_mask"] = mask
+    state.info["reservoir_target_temperature_cell"] = target_T_all
+    state.info["reservoir_reference_temperature_cell"] = Tref_all
+    state.info["reservoir_last_refresh_particles"] = sample_info["Nsp_tot"]
+    info.update(
+        {
+            "refreshed": True,
+            "cell_ids": cells,
+            "removed_particles": removed,
+            "added_particles": int(sample_info["Nsp_tot"]),
+            "target_temperature_cell": target_T_all[cells - 1],
+            "reference_temperature_cell": Tref_all[cells - 1],
+        }
+    )
+    return state, info
+
+
+def locate_cell_from_point(mesh: dict[str, Any], pt: np.ndarray) -> int:
+    x, y, z = pt
+    X = np.asarray(mesh["x_edges"], dtype=np.float64)
+    Y = np.asarray(mesh["y_edges"], dtype=np.float64)
+    Z = np.asarray(mesh["z_edges"], dtype=np.float64)
+    ix = np.searchsorted(X, x, side="right") - 1
+    iy = np.searchsorted(Y, y, side="right") - 1
+    iz = np.searchsorted(Z, z, side="right") - 1
+    if ix < 0 or iy < 0 or iz < 0 or ix >= mesh["Nx"] or iy >= mesh["Ny"] or iz >= mesh["Nz"]:
+        return 0
+    return int(sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], ix + 1, iy + 1, iz + 1))
+
+
+def build_local_diff_spectrum(spec: dict[str, Any], Tsrc: float, Tloc: float) -> np.ndarray:
+    w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
+    DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
+    dw = ensure_2d_dw(spec)
+    n_src = bose_occupation(w, max(Tsrc, 1e-12))
+    n_loc = bose_occupation(w, max(Tloc, 1e-12))
+    Wbm = HBAR * w * DOS * (n_src - n_loc) * dw
+    Wbm[DOS <= 0] = 0.0
+    return Wbm
+
+
+def region_sampler_volume(mesh: dict[str, Any], src: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    region = src.get("region", {"type": "cells", "id": []})
+    if str(region.get("type", "cells")).lower() != "cells":
+        raise ValueError("spawn_heat_source currently supports only cell regions")
+    all_V = cell_volumes(mesh)
+    cells = np.asarray(region.get("id", np.arange(1, infer_Nc(mesh) + 1)), dtype=np.int64).reshape(-1)
+    Vc = all_V[cells - 1]
+    ctr = np.mean(mesh["centers"][cells - 1], axis=0)
+    return cells, Vc, ctr
+
+
+def emit_particles_from_Wbm_refsample(
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    cells: np.ndarray,
+    Vc: np.ndarray,
+    Wbm: np.ndarray,
+    dE_tot: float,
+    E_eff: float,
+    Tref: float,
+    next_id_base: int,
+    force_positive: bool,
+) -> ParticleBlock:
+    B, Nw = Wbm.shape
+    Wabs = np.abs(Wbm)
+    if not np.any(Wabs > 0):
+        return ParticleBlock.empty()
+    Wref = HBAR * np.maximum(spec["w_mid"], 0.0) * np.maximum(spec["DOS_w_b"], 0.0) * bose_occupation(spec["w_mid"], max(float(Tref), 1e-12)) * ensure_2d_dw(spec)
+    cdf_ref = np.cumsum(Wref.ravel(order="F"))
+    if cdf_ref[-1] <= 0:
+        return ParticleBlock.empty()
+    cdf_ref /= cdf_ref[-1]
+    Nexp = abs(dE_tot) / E_eff
+    Nsp = int(np.floor(Nexp) + (np.random.random() < (Nexp - np.floor(Nexp))))
+    if Nsp <= 0:
+        return ParticleBlock.empty()
+    lin = np.searchsorted(cdf_ref, np.random.random(Nsp), side="left")
+    lin = np.clip(lin, 0, B * Nw - 1)
+    b = (lin % B + 1).astype(np.int32)
+    m = (lin // B + 1).astype(np.int32)
+    nonzero = Wabs.ravel(order="F") > 0
+    for i in range(Nsp):
+        if nonzero[lin[i]]:
+            continue
+        nz = np.flatnonzero(nonzero)
+        lin[i] = nz[0]
+        b[i] = np.int32(lin[i] % B + 1)
+        m[i] = np.int32(lin[i] // B + 1)
+    has_edges = "w_edges" in spec and len(spec["w_edges"]) == Nw + 1
+    if has_edges:
+        w_lo = np.asarray(spec["w_edges"], dtype=np.float64)[m - 1]
+        w_hi = np.asarray(spec["w_edges"], dtype=np.float64)[m]
+        w = w_lo + (w_hi - w_lo) * np.random.random(Nsp)
+    else:
+        w = np.asarray(spec["w_mid"], dtype=np.float64)[b - 1, m - 1]
+    q, vabs = q_vabs_from_w_table(spec, w, b)
+    dirs = rand_unit_vec_batch(Nsp)
+    cdf_cell = np.cumsum(Vc) / Vc.sum()
+    picked = np.searchsorted(cdf_cell, np.random.random(Nsp), side="left")
+    picked = np.clip(picked, 0, cells.size - 1)
+    sampled_cells = cells[picked].astype(np.int32)
+    x, y, z = uniform_positions_in_cells(mesh, sampled_cells)
+    sign_vals = np.sign(Wbm.ravel(order="F")[lin]).astype(np.int8)
+    sign_vals[sign_vals == 0] = 1
+    if force_positive:
+        sign_vals[:] = 1
+    E = sign_vals.astype(np.float64) * E_eff
+    ids = np.arange(next_id_base + 1, next_id_base + Nsp + 1, dtype=np.int64)
+    return ParticleBlock(
+        id=ids,
+        par_id=ids.copy(),
+        cell=sampled_cells,
+        x=x,
+        y=y,
+        z=z,
+        b=b,
+        m=m,
+        w=w,
+        q=q,
+        vx=vabs * dirs[:, 0],
+        vy=vabs * dirs[:, 1],
+        vz=vabs * dirs[:, 2],
+        vabs=vabs,
+        E=E,
+        sgn=sign_vals,
+        n_ph=E / (HBAR * np.maximum(w, 1e-30)),
+        seed=np.random.randint(1, 2**31 - 1, size=Nsp, dtype=np.int64),
+        t_left=np.zeros(Nsp, dtype=np.float64),
+    )
+
+
+def spawn_heat_source(opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str, Any], state: SimulationState, Tprime: np.ndarray, lut: dict[str, Any], src: dict[str, Any], dt: float) -> ParticleBlock:
+    if str(src.get("type", "")).lower() != "volume":
+        raise ValueError("only volumetric heat sources are supported")
+    E_eff = float(src.get("E_eff", get_or(opts, "E_eff", 1e-18)))
+    cells, Vc, ctr = region_sampler_volume(mesh, src)
+    V_region = float(Vc.sum())
+    if V_region <= 0:
+        return ParticleBlock.empty()
+    cid = locate_cell_from_point(mesh, ctr)
+    Tloc = float(Tprime[cid - 1]) if 1 <= cid <= Tprime.size else float(np.mean(Tprime))
+    dE_tot = float(src["qvol"]) * V_region * dt
+    Uloc = float(lut["U_interp"](np.clip(Tloc, lut["T"][0], lut["T"][-1])))
+    Tsrc = float(lut["inv_interp"](np.clip(Uloc + dE_tot / V_region, lut["U_mono"][0], lut["U_mono"][-1])))
+    Wbm = build_local_diff_spectrum(spec, Tsrc, Tloc)
+    if not np.any(Wbm != 0):
+        return ParticleBlock.empty()
+    Tref_all = np.asarray(state.info.get("Tref_cell", np.zeros(0)), dtype=np.float64).reshape(-1)
+    if Tref_all.size >= int(np.max(cells)):
+        Tref_loc = float(np.mean(Tref_all[cells - 1]))
+    elif np.isfinite(get_or(opts, "Tref", np.nan)):
+        Tref_loc = float(opts["Tref"])
+    else:
+        Tref_loc = Tloc
+    return emit_particles_from_Wbm_refsample(mesh, spec, cells, Vc, Wbm, dE_tot, E_eff, Tref_loc, next_particle_id(state.p), bool(src.get("force_positive", False)))
+
+
+@njit(parallel=True, cache=True)
+def _precompute_relax_times_numba(
+    cell_id: np.ndarray,
+    b: np.ndarray,
+    w: np.ndarray,
+    vabs: np.ndarray,
+    vx: np.ndarray,
+    vy: np.ndarray,
+    vz: np.ndarray,
+    q: np.ndarray,
+    Tcell: np.ndarray,
+    branch_is_la: np.ndarray,
+    branch_is_ta: np.ndarray,
+    branch_is_loto: np.ndarray,
+    omega_cut: float,
+    B_L: float,
+    B_TN: float,
+    B_TU: float,
+    tau_LTO_ps: float,
+    A_imp: float,
+    bulk_L: float,
+    bulk_F: float,
+    Tsi: float,
+    Delta: float,
+    n0: float,
+    n1: float,
+    n2: float,
+) -> np.ndarray:
+    Np = w.size
+    out = np.zeros((Np, 6), dtype=np.float64)
+    for i in prange(Np):
+        bi = b[i] - 1
+        wi = w[i]
+        vg_i = vabs[i]
+        cid = cell_id[i] - 1
+        T = max(Tcell[cid], 1e-6)
+        if branch_is_la[bi]:
+            out[i, 0] = B_L * wi * wi * T**3
+        if branch_is_ta[bi]:
+            out[i, 1] = B_TN * wi * T**4
+            if wi > omega_cut:
+                x = HBAR * wi / (K_B * T)
+                out[i, 2] = B_TU * wi * wi / max(math.sinh(x), 1e-12)
+        if branch_is_loto[bi]:
+            out[i, 3] = 1.0 / (tau_LTO_ps * 1e-12)
+        out[i, 4] = A_imp * wi**4
+        if Tsi > 0.0:
+            normv = math.sqrt(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
+            if normv > 0.0:
+                cosB = abs((vx[i] * n0 + vy[i] * n1 + vz[i] * n2) / normv)
+            else:
+                cosB = math.sqrt(1.0 / 3.0)
+            p_spec = math.exp(-4.0 * (max(q[i], 0.0) * Delta) ** 2 * cosB * cosB)
+            Ffilm = (1.0 - p_spec) / (1.0 + p_spec)
+            out[i, 5] = vg_i / max(Tsi, 1e-12) * Ffilm
+        elif bulk_L > 0.0:
+            out[i, 5] = vg_i / max(bulk_L * bulk_F, 1e-12)
+    return out
+
+
+def precompute_relax_times(state: SimulationState, Tcell: np.ndarray, opts: dict[str, Any], spec: dict[str, Any]) -> np.ndarray:
+    if len(state.p) == 0:
+        return np.zeros((0, 6), dtype=np.float64)
+    parallel_cfg = dict(get_or(opts, "parallel", {}))
+    ensure_num_threads(int(get_or(parallel_cfg, "num_threads", os.cpu_count() or 1)))
+    n_hat = np.asarray(get_or(opts, "transport_n", np.array([0.0, 0.0, 1.0])), dtype=np.float64).reshape(3)
+    n_hat /= max(np.linalg.norm(n_hat), np.finfo(np.float64).eps)
+    return _precompute_relax_times_numba(
+        state.p.cell.astype(np.int64),
+        state.p.b.astype(np.int64),
+        state.p.w.astype(np.float64),
+        state.p.vabs.astype(np.float64),
+        state.p.vx.astype(np.float64),
+        state.p.vy.astype(np.float64),
+        state.p.vz.astype(np.float64),
+        state.p.q.astype(np.float64),
+        np.asarray(Tcell, dtype=np.float64),
+        np.asarray(spec["branch_is_la"], dtype=np.bool_),
+        np.asarray(spec["branch_is_ta"], dtype=np.bool_),
+        np.asarray(spec["branch_is_loto"], dtype=np.bool_),
+        float(spec["omega_cut_ta"]),
+        float(get_or(opts, "BL", 1.18e-24)),
+        float(get_or(opts, "BTN", 10.5e-13)),
+        float(get_or(opts, "BTU", 2.89e-18)),
+        float(get_or(opts, "tau_LTO_ps", 3.5)),
+        float(get_or(opts, "A_imp", 1.32e-45)),
+        float(get_or(opts, "PB_bulk_L", 7.16e-3)),
+        float(get_or(opts, "PB_bulk_F", 0.68)),
+        float(get_or(opts, "PB_Tsi", 0.0)),
+        float(get_or(opts, "PB_Delta", 0.0)),
+        float(n_hat[0]),
+        float(n_hat[1]),
+        float(n_hat[2]),
+    )
+
+
+def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], state: SimulationState, rates_mat: np.ndarray | None) -> tuple[float, dict[str, Any]]:
+    dt_min = float(get_or(opts, "dt_min", 1e-15))
+    dt_max = float(get_or(opts, "dt_max", 1e-10))
+    dt_fixed = float(get_or(opts, "dt", 0.0))
+    cfl_safe = float(get_or(opts, "dt_safety_cfl", 0.5))
+    p_target = float(get_or(opts, "p_target", 0.01))
+    mode = str(get_or(opts, "dt_prob_mode", "max")).lower()
+    pctl = float(get_or(opts, "dt_prob_pctl", 95.0))
+    vg_max = float(max(1e-9, get_or(spec, "vg_max", 0.0)))
+    if vg_max <= 1e-9 and len(state.p):
+        vg_max = float(max(1e-9, state.p.vabs.max()))
+    hmin = float(get_or(mesh, "hmin", 1.0))
+    dt_cfl = cfl_safe * hmin / vg_max
+    r_stat = 0.0
+    dt_prob = np.inf
+    if rates_mat is not None and rates_mat.size:
+        r_tot = np.sum(rates_mat, axis=1)
+        r_pos = r_tot[r_tot > 0]
+        if r_pos.size:
+            if mode == "avg":
+                r_stat = float(np.mean(r_pos))
+            elif mode == "pctl":
+                r_stat = float(np.percentile(r_pos, pctl))
+            else:
+                r_stat = float(np.max(r_pos))
+            dt_prob = -math.log(max(1.0 - p_target, 1e-12)) / max(r_stat, 1e-30)
+    dt_raw = dt_fixed if dt_fixed > 0.0 else min(dt_cfl, dt_prob)
+    dt = min(max(dt_raw, dt_min), dt_max)
+    if dt_fixed > 0.0:
+        mode = "fixed"
+    return dt, {"dt_cfl": dt_cfl, "dt_prob": dt_prob, "dt_raw": dt_raw, "dt": dt, "vg_max": vg_max, "hmin": hmin, "p_target": p_target, "mode": mode, "r_stat": r_stat, "p_scat_max": float(np.max(1.0 - np.exp(-dt * np.sum(rates_mat, axis=1)))) if rates_mat is not None and rates_mat.size else np.nan}
+
+
+def get_w_edges(spec: dict[str, Any]) -> np.ndarray:
+    if "w_edges" in spec and len(spec["w_edges"]) == spec["w_mid"].shape[1] + 1:
+        return np.asarray(spec["w_edges"], dtype=np.float64)
+    wm = np.asarray(spec["w_mid"], dtype=np.float64)[0]
+    edges = np.zeros(wm.size + 1, dtype=np.float64)
+    edges[1:-1] = 0.5 * (wm[:-1] + wm[1:])
+    edges[0] = wm[0] - max(wm[1] - wm[0], 1e-30)
+    edges[-1] = wm[-1] + max(wm[-1] - wm[-2], 1e-30)
+    return edges
+
+
+def build_pp_rate_table_from_particles(b_vec: np.ndarray, w_vec: np.ndarray, rpp_vec: np.ndarray, w_edges: np.ndarray, B: int, Nw: int) -> np.ndarray:
+    m_vec = np.digitize(w_vec, w_edges) - 1
+    m_vec = np.clip(m_vec, 0, Nw - 1)
+    lin = m_vec * B + (b_vec.astype(np.int64) - 1)
+    sumR = np.bincount(lin, weights=rpp_vec, minlength=B * Nw).reshape(Nw, B).T
+    cntR = np.bincount(lin, minlength=B * Nw).reshape(Nw, B).T
+    Gamma = np.zeros((B, Nw), dtype=np.float64)
+    mask = cntR > 0
+    Gamma[mask] = sumR[mask] / cntR[mask]
+    global_mean = float(sumR.sum() / max(cntR.sum(), 1))
+    if not np.isfinite(global_mean) or global_mean <= 0:
+        global_mean = 1e-30
+    for bb in range(B):
+        if np.any(mask[bb]):
+            row_mean = float(sumR[bb].sum() / max(cntR[bb].sum(), 1))
+            fill_val = row_mean if np.isfinite(row_mean) and row_mean > 0 else global_mean
+        else:
+            fill_val = global_mean
+        Gamma[bb, ~mask[bb]] = fill_val
+    if not np.any(Gamma > 0):
+        Gamma[:] = 1.0
+    return Gamma
+
+
+def pp_rate_table_at_T(spec: dict[str, Any], T: float, opts: dict[str, Any], fallback_table: np.ndarray) -> np.ndarray:
+    if callable(opts.get("pp_rate_table_fun")):
+        Gamma = np.asarray(opts["pp_rate_table_fun"](T, spec), dtype=np.float64)
+    elif callable(spec.get("pp_rate_table_fun")):
+        Gamma = np.asarray(spec["pp_rate_table_fun"](T), dtype=np.float64)
+    elif "Gamma_pp_T" in spec and "T_grid" in spec:
+        Tg = np.asarray(spec["T_grid"], dtype=np.float64).reshape(-1)
+        G3 = np.asarray(spec["Gamma_pp_T"], dtype=np.float64)
+        if T <= Tg[0]:
+            Gamma = G3[:, :, 0]
+        elif T >= Tg[-1]:
+            Gamma = G3[:, :, -1]
+        else:
+            k = int(np.searchsorted(Tg, T, side="right") - 1)
+            a = (T - Tg[k]) / (Tg[k + 1] - Tg[k])
+            Gamma = (1.0 - a) * G3[:, :, k] + a * G3[:, :, k + 1]
+    else:
+        Gamma = fallback_table
+    Gamma = np.maximum(np.nan_to_num(Gamma, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+    if not np.any(Gamma > 0):
+        Gamma = np.maximum(fallback_table, 0.0)
+        if not np.any(Gamma > 0):
+            Gamma = np.ones_like(fallback_table)
+    return Gamma
+
+
+def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], dt: float, Tstar: np.ndarray, r_tau: np.ndarray) -> tuple[SimulationState, np.ndarray]:
+    Nc = infer_Nc(mesh)
+    if len(state.p) == 0:
+        return state, np.zeros(Nc, dtype=np.float64)
+    pb_on = bool(get_or(get_or(opts, "scatter", {}), "pb_on", False))
+    b = state.p.b.copy().astype(np.int32)
+    w = state.p.w.copy()
+    vabs = state.p.vabs.copy()
+    vx = state.p.vx.copy()
+    vy = state.p.vy.copy()
+    vz = state.p.vz.copy()
+    cell_id = state.p.cell.astype(np.int64)
+    rLA, rTAN, rTAU, rLTO, rPI, rPB = [np.maximum(r_tau[:, i], 0.0) for i in range(6)]
+    if not pb_on:
+        rPB[:] = 0.0
+    rPP = np.zeros(len(state.p), dtype=np.float64)
+    rPP[b == 1] = rLA[b == 1]
+    rPP[b == 2] = rTAN[b == 2] + rTAU[b == 2]
+    rPP[b > 2] = rLTO[b > 2]
+    rTOT = rPP + rPI + rPB
+    hit = np.random.random(len(state.p)) < (1.0 - np.exp(-dt * np.maximum(rTOT, 0.0)))
+    sel = np.random.random(np.count_nonzero(hit)) * rTOT[hit]
+    rPP_hit = rPP[hit]
+    rPI_hit = rPI[hit]
+    isPP = np.zeros(len(state.p), dtype=bool)
+    isPI = np.zeros(len(state.p), dtype=bool)
+    isPB = np.zeros(len(state.p), dtype=bool)
+    isPP[hit] = sel < rPP_hit
+    isPI[hit] = (~isPP[hit]) & (sel < (rPP_hit + rPI_hit))
+    isPB[hit] = ~isPP[hit] & ~isPI[hit]
+    if np.any(isPI):
+        dirs = rand_unit_vec_batch(int(np.count_nonzero(isPI)))
+        idx = np.flatnonzero(isPI)
+        vx[idx] = vabs[idx] * dirs[:, 0]
+        vy[idx] = vabs[idx] * dirs[:, 1]
+        vz[idx] = vabs[idx] * dirs[:, 2]
+    if np.any(isPP):
+        iiPP = np.flatnonzero(isPP)
+        cPP = cell_id[iiPP]
+        Tref_cell = reference_temperature_from_state(state, opts, Nc)
+        B, Nw = spec["w_mid"].shape
+        w_edges = get_w_edges(spec)
+        fallback = build_pp_rate_table_from_particles(b.astype(np.int64), w, rPP, w_edges, B, Nw)
+        use_center = bool(get_or(opts, "use_bin_center_w", True))
+        DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
+        dw2 = ensure_2d_dw(spec)
+        wmid = np.asarray(spec["w_mid"], dtype=np.float64)
+        b_new = np.zeros(iiPP.size, dtype=np.int32)
+        w_new = np.zeros(iiPP.size, dtype=np.float64)
+        vabs_new = np.zeros(iiPP.size, dtype=np.float64)
+        for cid in np.unique(cPP):
+            loc = cPP == cid
+            Tcell_loc = float(max(Tstar[int(cid) - 1], 1e-12))
+            Gamma = pp_rate_table_at_T(spec, Tcell_loc, opts, fallback)
+            if str(get_or(opts, "mode", "absolute")).lower() == "absolute":
+                W = HBAR * wmid * DOS * bose_occupation(wmid, Tcell_loc) * Gamma * dw2
+            else:
+                Tref_loc = float(max(Tref_cell[int(cid) - 1], 1e-12))
+                dNB = bose_occupation(wmid, Tcell_loc) - bose_occupation(wmid, Tref_loc)
+                W = HBAR * wmid * DOS * np.abs(dNB) * Gamma * dw2
+            W = np.maximum(np.nan_to_num(W, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+            if not np.any(W > 0):
+                W[:] = 1.0
+            cdf = np.cumsum(W.ravel(order="F"))
+            cdf /= cdf[-1]
+            draws = np.random.random(np.count_nonzero(loc))
+            lin = np.searchsorted(cdf, draws, side="left")
+            lin = np.clip(lin, 0, B * Nw - 1)
+            b_pick = (lin % B + 1).astype(np.int32)
+            m_pick = (lin // B + 1).astype(np.int32)
+            if use_center or "w_edges" not in spec or len(spec["w_edges"]) != Nw + 1:
+                w_pick = wmid[b_pick - 1, m_pick - 1]
+            else:
+                w_lo = w_edges[m_pick - 1]
+                w_hi = w_edges[m_pick]
+                w_pick = w_lo + (w_hi - w_lo) * np.random.random(draws.size)
+            _, v_pick = q_vabs_from_w_table(spec, w_pick, b_pick)
+            b_new[loc] = b_pick
+            w_new[loc] = w_pick
+            vabs_new[loc] = v_pick
+        dirs = rand_unit_vec_batch(iiPP.size)
+        b[iiPP] = b_new
+        w[iiPP] = w_new
+        vabs[iiPP] = vabs_new
+        vx[iiPP] = vabs_new * dirs[:, 0]
+        vy[iiPP] = vabs_new * dirs[:, 1]
+        vz[iiPP] = vabs_new * dirs[:, 2]
+    changed = isPP | isPI | (pb_on & isPB)
+    if np.any(changed):
+        state.p.b = b
+        state.p.w = w
+        state.p.vabs = vabs
+        state.p.vx = vx
+        state.p.vy = vy
+        state.p.vz = vz
+        state.p.q = q_vabs_from_w_table(spec, state.p.w, state.p.b)[0]
+    after_energy = np.bincount(state.p.cell.astype(np.int64) - 1, weights=state.p.E, minlength=Nc).astype(np.float64) if len(state.p) else np.zeros(Nc, dtype=np.float64)
+    print(f"        [scatter] N={len(state.p)} | hits={int(np.count_nonzero(hit))} (PP={int(np.count_nonzero(isPP))}, PI={int(np.count_nonzero(isPI))}, PB={int(np.count_nonzero(isPB))}) | E_total={float(state.p.E.sum()):.3e} J")
+    return state, after_energy
+
+
+def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: dict[str, Any], spec: dict[str, Any] | None = None) -> tuple[SimulationState, dict[str, Any]]:
+    if len(state.p) == 0:
+        return state, {"heat_flux": empty_heat_flux_stats(mesh)}
+    if str(get_or(opts, "fly_mode", "cell")).lower() not in {"cell", "domain"}:
+        raise ValueError(f'unknown fly_mode "{opts["fly_mode"]}"')
+    Nx, Ny, Nz = mesh["Nx"], mesh["Ny"], mesh["Nz"]
+    X = np.asarray(mesh["x_edges"], dtype=np.float64)
+    Y = np.asarray(mesh["y_edges"], dtype=np.float64)
+    Z = np.asarray(mesh["z_edges"], dtype=np.float64)
+    epsl = 1e-11
+    x = state.p.x.copy()
+    y = state.p.y.copy()
+    z = state.p.z.copy()
+    pid = state.p.id.copy()
+    par_id = state.p.par_id.copy()
+    pb = state.p.b.copy()
+    pm = state.p.m.copy()
+    pw = state.p.w.copy()
+    pq = state.p.q.copy()
+    vx = state.p.vx.copy()
+    vy = state.p.vy.copy()
+    vz = state.p.vz.copy()
+    vabs = state.p.vabs.copy()
+    pE = state.p.E.copy()
+    psgn = state.p.sgn.copy()
+    pn_ph = state.p.n_ph.copy()
+    pseed = state.p.seed.copy()
+    cid = state.p.cell.astype(np.int64).copy()
+    alive = (cid >= 1) & (cid <= Nx * Ny * Nz) & (vabs > 0)
+    t_rem = np.full(len(state.p), dt, dtype=np.float64)
+    next_id = next_particle_id(state.p)
+    cid_safe = np.clip(cid, 1, Nx * Ny * Nz)
+    ix, iy, iz = ind2sub(Nx, Ny, Nz, cid_safe)
+    if np.any(alive):
+        idx = np.flatnonzero(alive)
+        x[idx] = np.clip(x[idx], X[ix[idx] - 1] + epsl, X[ix[idx]] - epsl)
+        y[idx] = np.clip(y[idx], Y[iy[idx] - 1] + epsl, Y[iy[idx]] - epsl)
+        z[idx] = np.clip(z[idx], Z[iz[idx] - 1] + epsl, Z[iz[idx]] - epsl)
+    flux = empty_heat_flux_stats(mesh)
+    while True:
+        act = np.flatnonzero(alive & (t_rem > 0))
+        if act.size == 0:
+            break
+        INF = np.full(act.size, np.inf, dtype=np.float64)
+        tx = INF.copy()
+        ty = INF.copy()
+        tz = INF.copy()
+        xa, ya, za = x[act], y[act], z[act]
+        vxa, vya, vza = vx[act], vy[act], vz[act]
+        ix_a, iy_a, iz_a = ix[act], iy[act], iz[act]
+        xL, xR = X[ix_a - 1], X[ix_a]
+        yB, yT = Y[iy_a - 1], Y[iy_a]
+        zD, zU = Z[iz_a - 1], Z[iz_a]
+        pos = vxa > 0
+        tx[pos] = (xR[pos] - xa[pos]) / vxa[pos]
+        neg = vxa < 0
+        tx[neg] = (xL[neg] - xa[neg]) / vxa[neg]
+        pos = vya > 0
+        ty[pos] = (yT[pos] - ya[pos]) / vya[pos]
+        neg = vya < 0
+        ty[neg] = (yB[neg] - ya[neg]) / vya[neg]
+        pos = vza > 0
+        tz[pos] = (zU[pos] - za[pos]) / vza[pos]
+        neg = vza < 0
+        tz[neg] = (zD[neg] - za[neg]) / vza[neg]
+        tx = np.maximum(tx, 0.0)
+        ty = np.maximum(ty, 0.0)
+        tz = np.maximum(tz, 0.0)
+        tcell = tx.copy()
+        axis_ix = np.ones(act.size, dtype=np.int8)
+        m = ty < tcell
+        tcell[m] = ty[m]
+        axis_ix[m] = 2
+        m = tz < tcell
+        tcell[m] = tz[m]
+        axis_ix[m] = 3
+        tf = np.minimum(tcell, t_rem[act])
+        x[act] += vx[act] * tf
+        y[act] += vy[act] * tf
+        z[act] += vz[act] * tf
+        t_rem[act] -= tf
+        hit = np.isfinite(tcell) & (np.abs(tf - tcell) <= np.maximum(1e-15 * tcell, 1e-18))
+        for jj in np.flatnonzero(hit):
+            k = int(act[jj])
+            if axis_ix[jj] == 1:
+                normal = "+X" if vx[k] > 0 else "-X"
+            elif axis_ix[jj] == 2:
+                normal = "+Y" if vy[k] > 0 else "-Y"
+            else:
+                normal = "+Z" if vz[k] > 0 else "-Z"
+            pt = np.array([x[k], y[k], z[k]], dtype=np.float64)
+            action = face_action(mesh, normal, pt)
+            packet_E = float(pE[k]) if k < pE.size else 0.0
+            if action == "pass":
+                tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
+                if normal == "+X":
+                    if ix[k] >= Nx:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        ix[k] += 1
+                        x[k] = X[ix[k] - 1] + epsl
+                elif normal == "-X":
+                    if ix[k] <= 1:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        ix[k] -= 1
+                        x[k] = X[ix[k]] - epsl
+                elif normal == "+Y":
+                    if iy[k] >= Ny:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        iy[k] += 1
+                        y[k] = Y[iy[k] - 1] + epsl
+                elif normal == "-Y":
+                    if iy[k] <= 1:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        iy[k] -= 1
+                        y[k] = Y[iy[k]] - epsl
+                elif normal == "+Z":
+                    if iz[k] >= Nz:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        iz[k] += 1
+                        z[k] = Z[iz[k] - 1] + epsl
+                else:
+                    if iz[k] <= 1:
+                        alive[k] = False
+                        cid[k] = -1
+                    else:
+                        iz[k] -= 1
+                        z[k] = Z[iz[k]] - epsl
+                if alive[k]:
+                    cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+            elif action == "reflect":
+                if normal in {"+X", "-X"}:
+                    vx[k] = -vx[k]
+                    x[k] = X[ix[k]] - epsl if normal == "+X" else X[ix[k] - 1] + epsl
+                elif normal in {"+Y", "-Y"}:
+                    vy[k] = -vy[k]
+                    y[k] = Y[iy[k]] - epsl if normal == "+Y" else Y[iy[k] - 1] + epsl
+                else:
+                    vz[k] = -vz[k]
+                    z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
+            elif action == "catch":
+                tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
+                alive[k] = False
+                cid[k] = -1
+            elif action == "periodic":
+                if normal == "+X":
+                    ix[k] = 1
+                    x[k] = X[0] + epsl
+                elif normal == "-X":
+                    ix[k] = Nx
+                    x[k] = X[-1] - epsl
+                elif normal == "+Y":
+                    iy[k] = 1
+                    y[k] = Y[0] + epsl
+                elif normal == "-Y":
+                    iy[k] = Ny
+                    y[k] = Y[-1] - epsl
+                elif normal == "+Z":
+                    iz[k] = 1
+                    z[k] = Z[0] + epsl
+                else:
+                    iz[k] = Nz
+                    z[k] = Z[-1] - epsl
+                cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+            elif action == "generate":
+                tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
+                has_neighbor = True
+                child_x, child_y, child_z = x[k], y[k], z[k]
+                child_ix, child_iy, child_iz = ix[k], iy[k], iz[k]
+                if normal == "+X":
+                    if ix[k] >= Nx:
+                        has_neighbor = False
+                    else:
+                        child_ix = ix[k] + 1
+                        child_x = X[child_ix - 1] + epsl
+                elif normal == "-X":
+                    if ix[k] <= 1:
+                        has_neighbor = False
+                    else:
+                        child_ix = ix[k] - 1
+                        child_x = X[child_ix] - epsl
+                elif normal == "+Y":
+                    if iy[k] >= Ny:
+                        has_neighbor = False
+                    else:
+                        child_iy = iy[k] + 1
+                        child_y = Y[child_iy - 1] + epsl
+                elif normal == "-Y":
+                    if iy[k] <= 1:
+                        has_neighbor = False
+                    else:
+                        child_iy = iy[k] - 1
+                        child_y = Y[child_iy] - epsl
+                elif normal == "+Z":
+                    if iz[k] >= Nz:
+                        has_neighbor = False
+                    else:
+                        child_iz = iz[k] + 1
+                        child_z = Z[child_iz - 1] + epsl
+                else:
+                    if iz[k] <= 1:
+                        has_neighbor = False
+                    else:
+                        child_iz = iz[k] - 1
+                        child_z = Z[child_iz] - epsl
+                if has_neighbor:
+                    next_id += 1
+                    pid = np.append(pid, next_id)
+                    par_id = np.append(par_id, next_id)
+                    cid = np.append(cid, sub2ind(Nx, Ny, Nz, child_ix, child_iy, child_iz))
+                    x = np.append(x, child_x)
+                    y = np.append(y, child_y)
+                    z = np.append(z, child_z)
+                    pb = np.append(pb, pb[k])
+                    pm = np.append(pm, pm[k])
+                    pw = np.append(pw, pw[k])
+                    pq = np.append(pq, pq[k])
+                    vx = np.append(vx, vx[k])
+                    vy = np.append(vy, vy[k])
+                    vz = np.append(vz, vz[k])
+                    vabs = np.append(vabs, vabs[k])
+                    pE = np.append(pE, pE[k])
+                    psgn = np.append(psgn, psgn[k])
+                    pn_ph = np.append(pn_ph, pn_ph[k])
+                    pseed = np.append(pseed, np.random.randint(1, 2**31 - 1, dtype=np.int64))
+                    t_rem = np.append(t_rem, t_rem[k])
+                    alive = np.append(alive, True)
+                    ix = np.append(ix, child_ix)
+                    iy = np.append(iy, child_iy)
+                    iz = np.append(iz, child_iz)
+                if normal in {"+X", "-X"}:
+                    vx[k] = -vx[k]
+                    x[k] = X[ix[k]] - epsl if normal == "+X" else X[ix[k] - 1] + epsl
+                elif normal in {"+Y", "-Y"}:
+                    vy[k] = -vy[k]
+                    y[k] = Y[iy[k]] - epsl if normal == "+Y" else Y[iy[k] - 1] + epsl
+                else:
+                    vz[k] = -vz[k]
+                    z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
+            else:
+                raise ValueError(f"unsupported face action {action}")
+        alive_idx = np.flatnonzero(alive)
+        if alive_idx.size:
+            x[alive_idx] = np.clip(x[alive_idx], X[ix[alive_idx] - 1] + epsl, X[ix[alive_idx]] - epsl)
+            y[alive_idx] = np.clip(y[alive_idx], Y[iy[alive_idx] - 1] + epsl, Y[iy[alive_idx]] - epsl)
+            z[alive_idx] = np.clip(z[alive_idx], Z[iz[alive_idx] - 1] + epsl, Z[iz[alive_idx]] - epsl)
+    keep = alive & (cid > 0)
+    state.p = ParticleBlock(
+        id=pid[keep],
+        par_id=par_id[keep],
+        cell=cid[keep].astype(np.int32),
+        x=x[keep],
+        y=y[keep],
+        z=z[keep],
+        b=pb[keep],
+        m=pm[keep],
+        w=pw[keep],
+        q=pq[keep],
+        vx=vx[keep],
+        vy=vy[keep],
+        vz=vz[keep],
+        vabs=vabs[keep],
+        E=pE[keep],
+        sgn=psgn[keep],
+        n_ph=pn_ph[keep],
+        seed=pseed[keep],
+        t_left=np.zeros(np.count_nonzero(keep), dtype=np.float64),
+    )
+    return state, {"heat_flux": flux}
+
+
+def accumulate_output(output_cfg: dict[str, Any], fly_stats: dict[str, Any], dt: float) -> dict[str, Any]:
+    if not output_cfg.get("enabled", False):
+        return output_cfg
+    output_cfg["cum_time"] += dt
+    output_cfg["interval_time"] += dt
+    h = fly_stats.get("heat_flux", {})
+    if h:
+        output_cfg["cum_energy"] += h["net_energy"]
+        output_cfg["interval_energy"] += h["net_energy"]
+        output_cfg["cum_crossings_pos"] += h["crossings_pos"]
+        output_cfg["cum_crossings_neg"] += h["crossings_neg"]
+        output_cfg["interval_crossings_pos"] += h["crossings_pos"]
+        output_cfg["interval_crossings_neg"] += h["crossings_neg"]
+    return output_cfg
+
+
+def reset_output_interval(output_cfg: dict[str, Any]) -> dict[str, Any]:
+    output_cfg["interval_energy"][:] = 0.0
+    output_cfg["interval_crossings_pos"][:] = 0.0
+    output_cfg["interval_crossings_neg"][:] = 0.0
+    output_cfg["interval_time"] = 0.0
+    return output_cfg
+
+
+def spawn_volume_sources_from_map(qvol: np.ndarray, opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str, Any], state: SimulationState, Tprime: np.ndarray, lut: dict[str, Any], dt: float) -> ParticleBlock:
+    blocks: list[ParticleBlock] = []
+    next_id = next_particle_id(state.p)
+    for cid, qsrc in enumerate(np.asarray(qvol, dtype=np.float64), start=1):
+        if qsrc == 0:
+            continue
+        src = {"type": "volume", "qvol": float(qsrc), "E_eff": state.WE, "region": {"type": "cells", "id": [cid]}, "force_positive": True}
+        temp_state = SimulationState(p=state.p, WE=state.WE, Wp=state.Wp, Nsp_cell=state.Nsp_cell, enhance_factor=state.enhance_factor, info=state.info)
+        newp = spawn_heat_source(opts, mesh, spec, temp_state, Tprime, lut, src, dt)
+        if len(newp):
+            shift = next_id - (int(newp.id[0]) - 1)
+            newp.id = newp.id + shift
+            newp.par_id = newp.par_id + shift
+            next_id = int(newp.id.max())
+            blocks.append(newp)
+    if not blocks:
+        return ParticleBlock.empty()
+    out = blocks[0]
+    for blk in blocks[1:]:
+        out = out.append(blk)
+    return out
+
+
+def resolve_linearization_temperature(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
+    if np.isfinite(get_or(opts, "T0", np.nan)):
+        return opts
+    fallback_T = np.nan
+    if np.isfinite(get_or(opts, "Tref", np.nan)):
+        fallback_T = float(opts["Tref"])
+    elif np.isfinite(get_or(opts, "T_init", np.nan)):
+        fallback_T = float(opts["T_init"])
+    _, meta = load_initial_temperature_field(mesh, opts, fallback_T)
+    opts["T0"] = float(meta["T_mean"]) if np.isfinite(meta["T_mean"]) else (fallback_T if np.isfinite(fallback_T) else 300.0)
+    return opts
+
+
+def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], state: SimulationState) -> tuple[np.ndarray, ParticleBlock, dict[str, Any]]:
+    Nc = infer_Nc(mesh)
+    T0 = float(get_or(opts, "T0", 300.0))
+    dt_min = float(get_or(opts, "dt_min", 1e-15))
+    dt_max = float(get_or(opts, "dt_max", 1e-10))
+    max_steps = int(get_or(opts, "max_steps", 5000))
+    alpha_T = float(np.clip(get_or(opts, "T_underrelax", 1.0), 0.0, 1.0))
+    scatter_on = bool(get_or(opts, "scatter_on", True))
+    reservoir_cfg = dict(get_or(opts, "reservoir", {}))
+    reservoir_on = bool(get_or(reservoir_cfg, "enable", True))
+    refresh_every = max(1, int(round(get_or(reservoir_cfg, "refresh_every_n_steps", 100))))
+    refresh_at_step1 = bool(get_or(reservoir_cfg, "refresh_at_step1", True))
+    qvol, qsrc_meta = load_volume_heat_source_field(mesh, opts, 0.0)
+    use_volume_map = bool(np.any(qvol != 0))
+    output_cfg = prepare_run_output(mesh, opts)
+    if output_cfg["enabled"]:
+        mesh["heat_flux_monitors"] = output_cfg["monitors"]
+    logcfg = dict(get_or(opts, "log", {}))
+    log_on = bool(get_or(logcfg, "on", True))
+    print_every = int(get_or(logcfg, "print_every", 1))
+    to_file = bool(get_or(logcfg, "to_file", False))
+    logfile = str(get_or(logcfg, "filename", "mc_log.txt"))
+    if to_file and output_cfg["enabled"]:
+        logfile = str(Path(output_cfg["run_dir"]) / Path(logfile).name)
+    log_handle = open(logfile, "a", encoding="utf-8") if to_file else None
+
+    def log(msg: str) -> None:
+        if not log_on:
+            return
+        if log_handle is None:
+            print(msg, end="")
+        else:
+            log_handle.write(msg)
+            log_handle.flush()
+
+    conv_cfg = dict(get_or(opts, "conv", {}))
+    conv = {
+        "enabled": bool(get_or(conv_cfg, "enable", get_or(opts, "stop_when_steady", True))),
+        "min_steps": max(1, int(round(get_or(conv_cfg, "min_steps", get_or(opts, "steady_min_steps", max_steps))))),
+        "n_consec": max(1, int(round(get_or(conv_cfg, "n_consec", get_or(opts, "steady_streak_need", 3))))),
+        "tol_inf": float(get_or(conv_cfg, "tol_inf", get_or(opts, "steady_tol_inf", 5e-2))),
+        "tol_l2": float(get_or(conv_cfg, "tol_l2", get_or(opts, "steady_tol_l2", 5e-2))),
+        "tol_Enet": float(get_or(conv_cfg, "tol_Enet", 2e-18)),
+    }
+    consec_ok = 0
+    Tstar, Tmeta = initial_temperature_from_state_or_file(state, mesh, opts, T0)
+    Tprime = Tstar.copy()
+    out = {
+        "dt_hist": [],
+        "T_inf_hist": [],
+        "T_l2_hist": [],
+        "pscat_max_hist": [],
+        "E_net_hist": [],
+        "dU_cells_hist": [],
+        "dU_alive_hist": [],
+        "resid_hist": [],
+        "iface_hist": [],
+        "nsteps": 0,
+        "converged": False,
+        "Temperature_hist": [],
+        "initial_temperature": Tstar.copy(),
+        "initial_temperature_meta": Tmeta,
+        "output_dir": "",
+        "output_steps_dir": "",
+        "step_history_file": "",
+        "heat_flux_monitor_warnings": [],
+        "reservoir_refresh_steps": [],
+    }
+    LUT = build_E_T_lookup(spec, et_lookup_cfg_from_opts(opts))
+    Vc = cell_volumes(mesh)
+    if reservoir_on and mesh.get("reservoirs") and refresh_at_step1:
+        state, res_info = refresh_reservoir_particles(state, mesh, spec, opts)
+        if res_info["refreshed"]:
+            Tstar[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
+            Tprime[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
+            out["reservoir_refresh_steps"].append(1)
+            log(f"[reservoir] step=1 refreshed {res_info['cell_ids'].size} cells | removed={res_info['removed_particles']} added={res_info['added_particles']}\n")
+    U_alive_prev = particles_total_energy(state, opts)
+    U_cells_prev = float(np.sum(np.asarray(LUT["U_interp"](np.clip(Tstar, LUT["T"][0], LUT["T"][-1])), dtype=np.float64) * Vc))
+    log(f"[{time.strftime('%H:%M:%S')}] MC BTE start. Ncells={Nc}, T0={T0:.2f} K, Tinit=[{Tstar.min():.2f}, {Tstar.mean():.2f}, {Tstar.max():.2f}] K\n")
+    if qsrc_meta["used_file"]:
+        log(f"[source] loaded volume heat source from {qsrc_meta['source']} | q[min,mean,max]=[{qsrc_meta['q_min']:+.3e}, {qsrc_meta['q_mean']:+.3e}, {qsrc_meta['q_max']:+.3e}]\n")
+    hdr = "  step |      dt[s]   |  dT_inf[K] |  dT_L2[K] |    E_net[J] |   T_min[K] |  T_mean[K] |   T_max[K] |  pscat_max |      Np\n"
+    fmt = "{step:6d} | {dt:1.4e} | {T_inf:1.4e} | {T_l2:1.4e} | {E_net:+.3e} | {Tmin:9.3f} | {Tmean:10.3f} | {Tmax:9.3f} | {pscat:10.3f} | {Np:7d}\n"
+    for step in range(1, max_steps + 1):
+        if reservoir_on and mesh.get("reservoirs") and step > 1 and ((step - 1) % refresh_every == 0):
+            state, res_info = refresh_reservoir_particles(state, mesh, spec, opts)
+            if res_info["refreshed"]:
+                Tstar[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
+                Tprime[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
+                out["reservoir_refresh_steps"].append(step)
+                log(f"[reservoir] step={step} refreshed {res_info['cell_ids'].size} cells | removed={res_info['removed_particles']} added={res_info['added_particles']}\n")
+        r_tau = precompute_relax_times(state, Tstar, opts, spec) if scatter_on else np.zeros((len(state.p), 6), dtype=np.float64)
+        dt, info_dt = step_pick_dt(mesh, spec, opts, state, r_tau)
+        dt = min(max(dt, dt_min), dt_max)
+        out["dt_hist"].append(dt)
+        if use_volume_map:
+            newpV = spawn_volume_sources_from_map(qvol, opts, mesh, spec, state, Tprime, LUT, dt)
+            if len(newpV):
+                state.p = state.p.append(newpV)
+        state, fly_stats = particle_fly(state, mesh, dt, opts, spec)
+        output_cfg = accumulate_output(output_cfg, fly_stats, dt)
+        if scatter_on and len(state.p):
+            r_tau = precompute_relax_times(state, Tstar, opts, spec)
+            state, _ = particle_scattering(state, mesh, spec, opts, dt, Tstar, r_tau)
+        Tprime, _ = update_temperature_from_energy(state, mesh, spec, opts, LUT)
+        E_net_total = 0.0
+        U_alive_now = particles_total_energy(state, opts)
+        U_cells_now = float(np.sum(np.asarray(LUT["U_interp"](np.clip(Tprime, LUT["T"][0], LUT["T"][-1])), dtype=np.float64) * Vc))
+        dU_cells = U_cells_now - U_cells_prev
+        dU_alive = U_alive_now - U_alive_prev
+        resid = dU_cells - dU_alive
+        dT = Tprime - Tstar
+        T_inf = float(np.linalg.norm(dT, ord=np.inf))
+        T_l2 = float(np.linalg.norm(dT) / math.sqrt(max(Tprime.size, 1)))
+        pscat_max = float(info_dt.get("p_scat_max", np.nan))
+        out["E_net_hist"].append(E_net_total)
+        out["dU_cells_hist"].append(dU_cells)
+        out["dU_alive_hist"].append(dU_alive)
+        out["resid_hist"].append(resid)
+        out["T_inf_hist"].append(T_inf)
+        out["T_l2_hist"].append(T_l2)
+        out["pscat_max_hist"].append(pscat_max)
+        out["Temperature_hist"].append(Tprime.copy())
+        out["iface_hist"].append({})
+        if log_on and (step == 1 or step % print_every == 0):
+            log(hdr)
+            log(fmt.format(step=step, dt=dt, T_inf=T_inf, T_l2=T_l2, E_net=E_net_total, Tmin=float(Tprime.min()), Tmean=float(Tprime.mean()), Tmax=float(Tprime.max()), pscat=0.0 if not np.isfinite(pscat_max) else pscat_max, Np=len(state.p)))
+            log(f"   [ledger] dUc={dU_cells:+.3e}  dUa={dU_alive:+.3e}  resid={resid:+.3e}  (J)\n")
+            log(f"   [dt] dt_cfl={float(info_dt.get('dt_cfl', np.nan)):1.3e}  dt_prob={float(info_dt.get('dt_prob', np.nan)):1.3e}\n")
+        if output_cfg["enabled"] and (step % output_cfg["every_n_steps"] == 0):
+            write_periodic_output(output_cfg, mesh, spec, state, Tprime, step, output_cfg["cum_time"], dt)
+            output_cfg = reset_output_interval(output_cfg)
+        Tstar = (1.0 - alpha_T) * Tstar + alpha_T * Tprime if alpha_T < 1.0 else Tprime.copy()
+        U_alive_prev = U_alive_now
+        U_cells_prev = U_cells_now
+        out["nsteps"] = step
+        pass_now = T_inf <= conv["tol_inf"] and T_l2 <= conv["tol_l2"] and abs(E_net_total) <= conv["tol_Enet"]
+        consec_ok = consec_ok + 1 if pass_now else 0
+        if conv["enabled"] and step >= conv["min_steps"] and consec_ok >= conv["n_consec"]:
+            out["converged"] = True
+            log(f"[{time.strftime('%H:%M:%S')}] Converged at step {step}: dT_inf={T_inf:1.3e}, dT_L2={T_l2:1.3e}, E_net={E_net_total:+.3e}\n")
+            break
+    if output_cfg["enabled"]:
+        if output_cfg["interval_time"] > 0 and out["nsteps"] > 0:
+            write_periodic_output(output_cfg, mesh, spec, state, Tprime, out["nsteps"], output_cfg["cum_time"], out["dt_hist"][-1])
+        out["output_dir"] = output_cfg["run_dir"]
+        out["output_steps_dir"] = output_cfg["steps_dir"]
+        out["step_history_file"] = output_cfg["step_history_file"]
+        out["heat_flux_monitor_warnings"] = output_cfg["monitor_warnings"]
+    if log_handle is not None:
+        log_handle.close()
+    return Tprime, state.p, out
+
+
+def MC_solve_BTE(cs: dict[str, Any], mat: dict[str, Any], opts: dict[str, Any] | None = None) -> tuple[np.ndarray, ParticleBlock, dict[str, Any]]:
+    if opts is None:
+        opts = mc_default_opts()
+    np.random.seed(int(get_or(opts, "mc_seed", 20240511)))
+    mesh = init_mesh_from_geom(cs)
+    if mat.get("material_library") is not None:
+        mesh["material_library"] = mat["material_library"]
+    opts = resolve_linearization_temperature(mesh, opts)
+    spec = build_spectral_grid(mat, opts)
+    print(f"[init] T0={float(opts['T0']):.2f} K | building initial particles")
+    state = init_state_energy(mesh, spec, opts)
+    print(f"[init] particles={len(state.p)} | mode={state.info.get('mode', 'unknown')}")
+    return MC_time_loop_BTE(mesh, spec, opts, state)
+
+
+def run_current_case(run_tag: str | None = None, base_dir: str | Path | None = None) -> dict[str, Any]:
+    base_dir = resolve_base_dir(base_dir)
+    input_dir = resolve_input_dir(base_dir)
+    if run_tag is None:
+        run_tag = time.strftime("%Y%m%d_%H%M%S")
+    cs = setup_case_from_ldg_lgrid(input_dir / "ldg.txt", input_dir / "lgrid.txt", length_scale=1e-6, input_length_unit="um", verbose=True)
+    mat = resolve_case_material(cs)
+    opts = mc_default_opts(base_dir)
+    opts["viz"]["enable"] = False
+    opts["log"]["on"] = True
+    opts["log"]["to_file"] = True
+    opts["log"]["filename"] = "mc_log.txt"
+    opts["log"]["print_every"] = 10
+    opts["output"]["run_tag"] = run_tag
+    Tp, p, out = MC_solve_BTE(cs, mat, opts)
+    if out.get("output_dir"):
+        write_csv_rows(Path(out["output_dir"]) / "final_summary.txt", [["steps", out["nsteps"]], ["converged", int(bool(out["converged"]))], ["reservoir_refresh_steps", str(out["reservoir_refresh_steps"])], ["Np", len(p)], ["Tmin_K", float(np.min(Tp))], ["Tmean_K", float(np.mean(Tp))], ["Tmax_K", float(np.max(Tp))]])
+    print(f"FINAL_OK steps={out['nsteps']} converged={int(bool(out['converged']))} refreshes={out['reservoir_refresh_steps']} Np={len(p)} Tmin={float(np.min(Tp)):.6f} Tmean={float(np.mean(Tp)):.6f} Tmax={float(np.max(Tp)):.6f} output={out.get('output_dir', '')}")
+    return {"Tp": Tp, "p": p, "out": out}
+
+
+def main(base_dir: str | Path | None = None) -> dict[str, Any]:
+    base_dir = resolve_base_dir(base_dir)
+    input_dir = resolve_input_dir(base_dir)
+    print("*****************************************************")
+    print("*          BTE Monte Carlo Simulator V1.0           *")
+    print("*    Developed by Chenglin Ye, Peking University    *")
+    print("*           Python Port for Codex, 2026             *")
+    print("*****************************************************")
+    cs = setup_case_from_ldg_lgrid(input_dir / "ldg.txt", input_dir / "lgrid.txt", length_scale=1e-6, input_length_unit="um", verbose=True)
+    mat = resolve_case_material(cs)
+    opts = mc_default_opts(base_dir)
+    Tp, p, out = MC_solve_BTE(cs, mat, opts)
+    return {"Tp": Tp, "p": p, "out": out}
+
+
+__all__ = [
+    "ParticleBlock",
+    "SimulationState",
+    "MC_solve_BTE",
+    "MC_time_loop_BTE",
+    "build_E_T_lookup",
+    "build_q_T_lookup",
+    "build_spectral_grid",
+    "init_mesh_from_geom",
+    "init_state_energy",
+    "load_heat_flux_monitors",
+    "load_initial_temperature_field",
+    "load_reference_temperature_field",
+    "load_volume_heat_source_field",
+    "main",
+    "mat_from_phonon_dispersion_file",
+    "mat_igzo",
+    "mat_silicon_100",
+    "mc_default_opts",
+    "particle_fly",
+    "particle_scattering",
+    "precompute_relax_times",
+    "prepare_run_output",
+    "refresh_reservoir_particles",
+    "resolve_case_material",
+    "resolve_case_materials",
+    "run_current_case",
+    "sample_particles_for_cells",
+    "setup_case_from_ldg_lgrid",
+    "spawn_heat_source",
+    "step_pick_dt",
+    "update_temperature_from_energy",
+]

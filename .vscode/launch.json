@@ -1,0 +1,80 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: main.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "python": "/home/ic/miniconda3/envs/3dmc/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Python: run_current_case.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_current_case.py",
+      "python": "/home/ic/miniconda3/envs/3dmc/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Python: export_thermal_conductivity.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/export_thermal_conductivity.py",
+      "python": "/home/ic/miniconda3/envs/3dmc/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--run-dir",
+        "output/run_20260316_154407",
+        "--steps",
+        "6800",
+        "6900",
+        "--output-csv",
+        "output/run_20260316_154407/thermal_k_debug.csv"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Python: plot_line_temperature.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/plot_line_temperature.py",
+      "python": "/home/ic/miniconda3/envs/3dmc/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--run-dir",
+        "output/run_20260316_154407",
+        "--step",
+        "6800",
+        "--fix",
+        "x=1",
+        "--fix",
+        "z=1",
+        "--mode",
+        "index",
+        "--output",
+        "output/run_20260316_154407/temperature_line_debug.png"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  ]
+}

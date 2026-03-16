@@ -1,0 +1,7 @@
+kind,source_path,snapshot_path
+layout_ldg,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/ldg.txt,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/layout_ldg__ldg.txt
+grid_lgrid,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/lgrid.txt,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/grid_lgrid__lgrid.txt
+initial_temperature,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/initial_temperature.csv,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/initial_temperature__initial_temperature.csv
+reference_temperature,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/reference_temperature.txt,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/reference_temperature__reference_temperature.txt
+volume_heat_source,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/volume_heat_source.txt,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/volume_heat_source__volume_heat_source.txt
+heat_flux_monitors,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/input/heat_flux_monitors.txt,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_20260316_141621/inputs/heat_flux_monitors__heat_flux_monitors.txt
