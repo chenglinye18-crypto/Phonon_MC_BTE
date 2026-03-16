@@ -1,0 +1,29 @@
+# Runtime solver parameters moved out of code.
+
+E_eff = 2.0e-19
+dt = 0.0  # <= 0 keeps adaptive time-step selection
+dt_min = 1.0e-15
+dt_max = 1.0e-11
+p_target = 0.05  # target scattering fraction used in dt selection
+max_steps = 50000
+ET_table_T_min = 1.0
+ET_table_T_max = 2000.0
+ET_table_nT = 2001
+
+[output]
+every_n_steps = 100
+
+[reservoir]
+refresh_every_n_steps = 100
+refresh_at_step1 = true
+
+[scattering]
+BL = 1.18e-24
+BTN = 5.25e-10
+BTU = 1.44e-10
+tau_LTO_ps = 3.5
+A_imp = 1.32e-45
+PB_Tsi = 1.0e-7
+PB_bulk_L = 7.16e-3
+PB_bulk_F = 0.68
+PB_Delta = 0.0
