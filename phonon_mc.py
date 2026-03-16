@@ -1914,7 +1914,7 @@ def update_temperature_from_energy(
     Ucl = np.clip(Uabs, Umin, Umax)
     Tnew = np.asarray(lut["inv_interp"](Ucl), dtype=np.float64)
     mode_str = "dev" if str(get_or(opts, "mode", "absolute")).lower() == "deviational" else "abs"
-    if Tnew.size:
+    if Tnew.size and bool(get_or(get_or(opts, "log", {}), "on", False)):
         print(
             f"[temp-update:{mode_str}] Np={len(state.p)} | E_total={Ecell.sum():.6e} J | "
             f"T[min,mean,max]=[{Tnew.min():.2f}, {Tnew.mean():.2f}, {Tnew.max():.2f}] K"
@@ -2665,7 +2665,12 @@ def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict
         state.p.vz = vz
         state.p.q = q_vabs_from_w_table(spec, state.p.w, state.p.b)[0]
     after_energy = np.bincount(state.p.cell.astype(np.int64) - 1, weights=state.p.E, minlength=Nc).astype(np.float64) if len(state.p) else np.zeros(Nc, dtype=np.float64)
-    print(f"        [scatter] N={len(state.p)} | hits={int(np.count_nonzero(hit))} (PP={int(np.count_nonzero(isPP))}, PI={int(np.count_nonzero(isPI))}, PB={int(np.count_nonzero(isPB))}) | E_total={float(state.p.E.sum()):.3e} J")
+    if bool(get_or(get_or(opts, "log", {}), "on", False)):
+        print(
+            f"        [scatter] N={len(state.p)} | hits={int(np.count_nonzero(hit))} "
+            f"(PP={int(np.count_nonzero(isPP))}, PI={int(np.count_nonzero(isPI))}, PB={int(np.count_nonzero(isPB))}) "
+            f"| E_total={float(state.p.E.sum()):.3e} J"
+        )
     return state, after_energy
 
 
