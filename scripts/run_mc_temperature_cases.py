@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from phonon_mc import run_current_case, setup_case_from_ldg_lgrid
+from phonon_mc import MC_solve_BTE, mc_default_opts, resolve_case_material, setup_case_from_ldg_lgrid, write_csv_rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,9 +111,36 @@ def main() -> int:
         run_tag = f"{batch_tag}_T{tref:.0f}K_ref{tref:.0f}K_pm{args.delta_T/2.0:.0f}K"
         print(f"[case] prepared input -> {case_dir}")
         print(f"[case] start run_tag={run_tag}")
-        result = run_current_case(run_tag=run_tag, base_dir=case_dir)
-        out = dict(result["out"])
-        final_tp = np.asarray(result["Tp"], dtype=np.float64).reshape(-1)
+        cs = setup_case_from_ldg_lgrid(case_dir / "ldg.txt", case_dir / "lgrid.txt", length_scale=1e-6, input_length_unit="um", verbose=True)
+        mat = resolve_case_material(cs)
+        opts = mc_default_opts(case_dir)
+        opts["viz"]["enable"] = False
+        opts["log"]["on"] = False
+        opts["log"]["to_file"] = True
+        opts["log"]["filename"] = "mc_log.txt"
+        opts["log"]["print_every"] = int(opts.get("output", {}).get("every_n_steps", 2000))
+        opts["output"]["run_tag"] = run_tag
+        final_tp, particles, out = MC_solve_BTE(cs, mat, opts)
+        out = dict(out)
+        if out.get("output_dir"):
+            write_csv_rows(
+                Path(out["output_dir"]) / "final_summary.txt",
+                [
+                    ["steps", out["nsteps"]],
+                    ["converged", int(bool(out["converged"]))],
+                    ["reservoir_refresh_steps", str(out["reservoir_refresh_steps"])],
+                    ["Np", len(particles)],
+                    ["Tmin_K", float(np.min(final_tp))],
+                    ["Tmean_K", float(np.mean(final_tp))],
+                    ["Tmax_K", float(np.max(final_tp))],
+                ],
+            )
+        print(
+            f"FINAL_OK steps={out['nsteps']} converged={int(bool(out['converged']))} "
+            f"refreshes={out['reservoir_refresh_steps']} Np={len(particles)} "
+            f"Tmin={float(np.min(final_tp)):.6f} Tmean={float(np.mean(final_tp)):.6f} "
+            f"Tmax={float(np.max(final_tp)):.6f} output={out.get('output_dir', '')}"
+        )
         rows.append(
             {
                 "temperature_K": tref,
