@@ -122,6 +122,17 @@ def format_cell_ids(mesh: dict, cell_ids: np.ndarray) -> str:
     return ";".join(parts)
 
 
+def select_monitor_row(table: pd.DataFrame, label: str, stat_type: str | None = None) -> pd.Series:
+    rows = table.loc[table["label"] == label]
+    if rows.empty:
+        return pd.Series(dtype=object)
+    if stat_type is not None and "stat_type" in rows.columns:
+        rows = rows.loc[rows["stat_type"].astype(str).str.lower() == stat_type.lower()]
+    if rows.empty:
+        return pd.Series(dtype=object)
+    return rows.iloc[0]
+
+
 def monitor_side_cells(mesh: dict, mon: pd.Series, monitor_length_scale: float) -> dict[str, np.ndarray]:
     normal = str(mon["effective_normal"]).upper()
     bounds_input = np.array([mon["x0_in"], mon["x1_in"], mon["y0_in"], mon["y1_in"], mon["z0_in"], mon["z1_in"]], dtype=np.float64)
@@ -176,17 +187,33 @@ def build_rows(run_dir: Path, mesh: dict, monitor_tbl: pd.DataFrame, steps: list
         step_dir = run_dir / "steps" / f"step_{step:05d}"
         temp_file = step_dir / "temperature.txt"
         heat_file = step_dir / "heat_flux.txt"
+        energy_file = step_dir / "heat_energy.txt"
         info_file = step_dir / "step_info.txt"
         if not temp_file.is_file() or not heat_file.is_file() or not info_file.is_file():
             raise FileNotFoundError(f"missing required step files under {step_dir}")
         Tcell = load_temperature_vector(mesh, temp_file)
         heat_tbl = pd.read_csv(heat_file)
+        energy_tbl = pd.read_csv(energy_file) if energy_file.is_file() else heat_tbl
         info = pd.read_csv(info_file).iloc[0]
         for _, mon in monitor_tbl.iterrows():
-            heat_row = heat_tbl.loc[heat_tbl["label"] == mon["label"]]
-            if heat_row.empty:
+            heat_interval = select_monitor_row(heat_tbl, str(mon["label"]), "interval")
+            heat_cumulative = select_monitor_row(heat_tbl, str(mon["label"]), "cumulative")
+            energy_interval = select_monitor_row(energy_tbl, str(mon["label"]), "interval")
+            energy_cumulative = select_monitor_row(energy_tbl, str(mon["label"]), "cumulative")
+            if heat_interval.empty and "stat_type" in heat_tbl.columns:
                 continue
-            heat = heat_row.iloc[0]
+            if energy_interval.empty and "stat_type" in energy_tbl.columns:
+                continue
+            if heat_interval.empty:
+                heat_interval = select_monitor_row(heat_tbl, str(mon["label"]))
+            if heat_cumulative.empty:
+                heat_cumulative = select_monitor_row(heat_tbl, str(mon["label"]))
+            if energy_interval.empty:
+                energy_interval = select_monitor_row(energy_tbl, str(mon["label"]))
+            if energy_cumulative.empty:
+                energy_cumulative = select_monitor_row(energy_tbl, str(mon["label"]))
+            if heat_interval.empty or energy_interval.empty:
+                continue
             side = monitor_side_cells(mesh, mon, monitor_length_scale)
             minus_cells = side["minus_cells"]
             plus_cells = side["plus_cells"]
@@ -197,8 +224,18 @@ def build_rows(run_dir: Path, mesh: dict, monitor_tbl: pd.DataFrame, steps: list
             deltaL = float(x_plus - x_minus)
             deltaT = float(T_plus - T_minus)
             gradT = deltaT / deltaL if deltaL != 0 else np.nan
-            q_interval = float(heat["flux_interval_W_m2"])
-            q_cumulative = float(heat["flux_cumulative_W_m2"])
+            if "net_W_m2" in heat_interval.index:
+                q_interval = float(heat_interval["net_W_m2"])
+            elif "flux_interval_net_W_m2" in heat_interval.index:
+                q_interval = float(heat_interval["flux_interval_net_W_m2"])
+            else:
+                q_interval = float(heat_interval["flux_interval_W_m2"])
+            if "net_W_m2" in heat_cumulative.index:
+                q_cumulative = float(heat_cumulative["net_W_m2"])
+            elif "flux_cumulative_net_W_m2" in heat_cumulative.index:
+                q_cumulative = float(heat_cumulative["flux_cumulative_net_W_m2"])
+            else:
+                q_cumulative = float(heat_cumulative["flux_cumulative_W_m2"])
             k_interval = q_interval / gradT if np.isfinite(gradT) and gradT != 0 else np.nan
             k_cumulative = q_cumulative / gradT if np.isfinite(gradT) and gradT != 0 else np.nan
             rows.append(
@@ -214,8 +251,8 @@ def build_rows(run_dir: Path, mesh: dict, monitor_tbl: pd.DataFrame, steps: list
                     "area_m2": float(mon["area_m2"]),
                     "elapsed_time_s": float(info["elapsed_time_s"]),
                     "interval_time_s": float(info["interval_time_s"]),
-                    "interval_energy_net_J": float(heat["interval_energy_net_J"]),
-                    "cumulative_energy_net_J": float(heat["cumulative_energy_net_J"]),
+                    "interval_energy_net_J": float(energy_interval["net_J"] if "net_J" in energy_interval.index else energy_interval["interval_energy_net_J"]),
+                    "cumulative_energy_net_J": float(energy_cumulative["net_J"] if "net_J" in energy_cumulative.index else energy_cumulative["cumulative_energy_net_J"]),
                     "q_flux_interval_W_m2": q_interval,
                     "q_flux_cumulative_W_m2": q_cumulative,
                     "minus_cell_ids": format_cell_ids(mesh, minus_cells),

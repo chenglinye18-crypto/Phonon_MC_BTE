@@ -1,0 +1,1 @@
+organized_studies/temperature_gradient/scripts/run_300_373_no_pm50.sh

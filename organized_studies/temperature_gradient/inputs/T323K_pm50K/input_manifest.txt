@@ -1,0 +1,10 @@
+length_nm=280
+grid_nm=10
+temperature_K=323
+wall_delta_K=50.0
+total_length_nm=300
+monitor_positions_nm=10;80;150;220;290
+ET_table_T_min_K=272.0
+ET_table_T_max_K=374.0
+Tloc_table_T_min_K=272.0
+Tloc_table_T_max_K=374.0

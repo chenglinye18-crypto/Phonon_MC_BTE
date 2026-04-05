@@ -1,0 +1,5 @@
+length_nm=560
+grid_nm=10
+temperature_K=373
+ny=58
+template=input_y560nm_10nm_Eeff5e-19_T300K

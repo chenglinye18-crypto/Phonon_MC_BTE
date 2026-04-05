@@ -1,0 +1,1 @@
+organized_studies/temperature_gradient/scripts/run_323K_sweep.sh

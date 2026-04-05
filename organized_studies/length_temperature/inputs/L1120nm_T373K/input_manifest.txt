@@ -1,0 +1,5 @@
+length_nm=1120
+grid_nm=10
+temperature_K=373
+ny=114
+template=input_y1120nm_10nm_Eeff5e-19_T300K

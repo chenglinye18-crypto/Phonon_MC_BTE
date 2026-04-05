@@ -224,13 +224,17 @@ def apply_solver_param_config(opts: dict[str, Any], config: dict[str, Any]) -> d
         return opts
     if "E_eff" in config:
         opts["E_eff"] = float(config["E_eff"])
-    for key in ("dt", "dt_min", "dt_max", "ET_table_T_min", "ET_table_T_max", "p_target"):
+    for key in ("dt", "dt_min", "dt_max", "ET_table_T_min", "ET_table_T_max", "Tloc_table_T_min", "Tloc_table_T_max", "p_target", "volume_heat_source_length_scale"):
         if key in config and config[key] is not None:
             opts[key] = float(config[key])
     if "ET_table_nT" in config and config["ET_table_nT"] is not None:
         opts["ET_table_nT"] = int(config["ET_table_nT"])
+    if "Tloc_table_nT" in config and config["Tloc_table_nT"] is not None:
+        opts["Tloc_table_nT"] = int(config["Tloc_table_nT"])
     if "max_steps" in config and config["max_steps"] is not None:
         opts["max_steps"] = int(config["max_steps"])
+    if "initial_particles_fixed" in config and config["initial_particles_fixed"] is not None:
+        opts["initial_particles_fixed"] = max(0, int(config["initial_particles_fixed"]))
     output_cfg = dict(config.get("output", {}))
     if output_cfg:
         out = dict(get_or(opts, "output", {}))
@@ -246,7 +250,7 @@ def apply_solver_param_config(opts: dict[str, Any], config: dict[str, Any]) -> d
             res["refresh_at_step1"] = bool(reservoir_cfg["refresh_at_step1"])
         opts["reservoir"] = res
     scattering = dict(config.get("scattering", {}))
-    for key in ("BL", "BTN", "BTU", "tau_LTO_ps", "A_imp", "PB_Tsi", "PB_bulk_L", "PB_bulk_F", "PB_Delta", "transport_n"):
+    for key in ("BL", "BTN", "BTU", "tau_LTO_ps", "A_imp", "B_imp", "C_imp", "PB_Tsi", "PB_bulk_L", "PB_bulk_F", "PB_Delta", "transport_n"):
         if key in scattering:
             opts[key] = scattering[key]
     return opts
@@ -310,6 +314,45 @@ def rand_unit_vec_batch(n: int) -> np.ndarray:
     return np.column_stack((sz * np.cos(phi), sz * np.sin(phi), cz))
 
 
+def rand_hemisphere_vec(normal: str) -> np.ndarray:
+    dirs = rand_unit_vec_batch(1)[0]
+    key = normal.upper()
+    if key == "+X":
+        dirs[0] = -abs(dirs[0])
+    elif key == "-X":
+        dirs[0] = abs(dirs[0])
+    elif key == "+Y":
+        dirs[1] = -abs(dirs[1])
+    elif key == "-Y":
+        dirs[1] = abs(dirs[1])
+    elif key == "+Z":
+        dirs[2] = -abs(dirs[2])
+    elif key == "-Z":
+        dirs[2] = abs(dirs[2])
+    else:
+        raise ValueError(f"invalid normal for hemisphere sampling: {normal}")
+    return dirs
+
+
+def parse_scatter_probabilities(tokens: list[str], vars_input: dict[str, float], line: str) -> np.ndarray:
+    if len(tokens) < 12:
+        raise ValueError(
+            f'invalid SCATTER rule: expected "SCATTER p_diffuse p_specular p_pass", got: {line}'
+        )
+    probs = np.array([eval_expr(tok, vars_input) for tok in tokens[9:12]], dtype=np.float64)
+    tol = 1e-12
+    if np.any(~np.isfinite(probs)):
+        raise ValueError(f"SCATTER probabilities must be finite: {line}")
+    if np.any(probs < -tol):
+        raise ValueError(f"SCATTER probabilities must be non-negative: {line}")
+    probs = np.maximum(probs, 0.0)
+    if abs(float(probs.sum()) - 1.0) > 1e-9:
+        raise ValueError(
+            f"SCATTER probabilities must sum to 1.0 (diffuse/specular/pass), got {probs.tolist()} in: {line}"
+        )
+    return probs
+
+
 def sub2ind(nx: int, ny: int, nz: int, ix: np.ndarray | int, iy: np.ndarray | int, iz: np.ndarray | int) -> np.ndarray:
     ix_arr = np.asarray(ix, dtype=np.int64)
     iy_arr = np.asarray(iy, dtype=np.int64)
@@ -366,13 +409,18 @@ def mc_default_opts(base_dir: str | Path | None = None) -> dict[str, Any]:
         "initial_temperature_file": str(input_dir / "initial_temperature.csv"),
         "reference_temperature_file": str(input_dir / "reference_temperature.txt"),
         "volume_heat_source_file": str(input_dir / "volume_heat_source.txt"),
+        "volume_heat_source_length_scale": 1e-6,
         "solver_param_file": str(solver_param_file),
         "dt": 0.0,
         "dt_min": 1e-15,
         "dt_max": 1e-11,
+        "initial_particles_fixed": 0,
         "ET_table_T_min": 1.0,
         "ET_table_T_max": 2000.0,
         "ET_table_nT": 2001,
+        "Tloc_table_T_min": 1.0,
+        "Tloc_table_T_max": 2000.0,
+        "Tloc_table_nT": 2001,
         "fly_mode": "cell",
         "dt_safety_cfl": 0.5,
         "p_target": 0.05,
@@ -401,6 +449,8 @@ def mc_default_opts(base_dir: str | Path | None = None) -> dict[str, Any]:
         "scatter_on": True,
         "tau_LTO_ps": 3.5,
         "A_imp": 1.32e-45,
+        "B_imp": 0.0,
+        "C_imp": 0.0,
         "PB_Tsi": 100e-9,
         "PB_bulk_L": 7.16e-3,
         "PB_bulk_F": 0.68,
@@ -434,6 +484,17 @@ def et_lookup_cfg_from_opts(opts: dict[str, Any]) -> dict[str, Any]:
         "T_min": float(get_or(opts, "ET_table_T_min", 1.0)),
         "T_max": float(get_or(opts, "ET_table_T_max", 2000.0)),
         "nT": int(get_or(opts, "ET_table_nT", 2001)),
+    }
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational" and np.isfinite(get_or(opts, "Tref", np.nan)):
+        cfg["Tref"] = float(opts["Tref"])
+    return cfg
+
+
+def tloc_lookup_cfg_from_opts(opts: dict[str, Any]) -> dict[str, Any]:
+    cfg = {
+        "T_min": float(get_or(opts, "Tloc_table_T_min", get_or(opts, "ET_table_T_min", 1.0))),
+        "T_max": float(get_or(opts, "Tloc_table_T_max", get_or(opts, "ET_table_T_max", 2000.0))),
+        "nT": int(get_or(opts, "Tloc_table_nT", get_or(opts, "ET_table_nT", 2001))),
     }
     if str(get_or(opts, "mode", "absolute")).lower() == "deviational" and np.isfinite(get_or(opts, "Tref", np.nan)):
         cfg["Tref"] = float(opts["Tref"])
@@ -523,12 +584,14 @@ def parse_ldg(filepath: str | Path, length_scale: float) -> dict[str, Any]:
             if len(tokens) < 9:
                 raise ValueError(f"invalid rule line: {line}")
             bounds_input = np.array([eval_expr(tokens[1 + k], vars_input) for k in range(6)], dtype=np.float64)
+            mode_name = tokens[8].upper()
             rule = {
                 "kind": head,
                 "bounds_input": bounds_input,
                 "bounds": bounds_input * length_scale,
                 "normal": tokens[7].upper(),
-                "mode": tokens[8].upper(),
+                "mode": mode_name,
+                "scatter_probs": parse_scatter_probabilities(tokens, vars_input, line) if mode_name == "SCATTER" else None,
                 "raw": line,
             }
             rules.append(finalize_rule(rule, vars_si))
@@ -736,6 +799,7 @@ def build_layout_from_rules(layout: dict[str, Any]) -> dict[str, Any]:
                 "face_tag": rule["face_tag"],
                 "mode": rule["mode"].upper(),
                 "normal": rule["normal"].upper(),
+                "scatter_probs": None if rule.get("scatter_probs") is None else np.asarray(rule["scatter_probs"], dtype=np.float64),
                 "bounds": np.asarray(rule["bounds"], dtype=np.float64),
                 "bounds_input": np.asarray(rule["bounds_input"], dtype=np.float64),
                 "patch_area": float(rule["patch_area"]),
@@ -965,6 +1029,7 @@ def build_layout_behavior(mesh: dict[str, Any], layout: dict[str, Any]) -> None:
         entry = {
             "normal": rule["normal"].upper(),
             "mode": rule["mode"].upper(),
+            "scatter_probs": None if rule.get("scatter_probs") is None else np.asarray(rule["scatter_probs"], dtype=np.float64),
             "axis": rule["axis"],
             "coord": float(rule["coord"]),
             "bounds": np.asarray(rule["bounds"], dtype=np.float64),
@@ -1427,6 +1492,94 @@ def build_q_T_lookup(spec: dict[str, Any], cfg: dict[str, Any] | None = None) ->
     }
 
 
+def scattering_rate_table_formula(spec: dict[str, Any], T: float, opts: dict[str, Any]) -> np.ndarray:
+    T = max(float(T), 1e-12)
+    w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
+    Gamma = np.zeros_like(w, dtype=np.float64)
+    branch_is_la = np.asarray(spec["branch_is_la"], dtype=np.bool_).reshape(-1)
+    branch_is_ta = np.asarray(spec["branch_is_ta"], dtype=np.bool_).reshape(-1)
+    branch_is_loto = np.asarray(spec["branch_is_loto"], dtype=np.bool_).reshape(-1)
+    omega_cut = float(spec["omega_cut_ta"])
+    BL = float(get_or(opts, "BL", 1.18e-24))
+    BTN = float(get_or(opts, "BTN", 10.5e-13))
+    BTU = float(get_or(opts, "BTU", 6.95e-18))
+    tau_LTO_ps = float(get_or(opts, "tau_LTO_ps", 3.5))
+    A_imp = float(get_or(opts, "A_imp", 0.0))
+    B_imp = float(get_or(opts, "B_imp", 0.0))
+    C_imp = float(get_or(opts, "C_imp", 0.0))
+    if np.any(branch_is_la):
+        Gamma[branch_is_la, :] = BL * w[branch_is_la, :] ** 2 * T**3
+    if np.any(branch_is_ta):
+        Gamma[branch_is_ta, :] = BTN * w[branch_is_ta, :] * T**4
+        w_ta = w[branch_is_ta, :]
+        ta_mask = w_ta > omega_cut
+        if np.any(ta_mask):
+            x = np.minimum((HBAR * w_ta) / (K_B * T), 700.0)
+            add = np.zeros_like(w_ta)
+            add[ta_mask] = BTU * w_ta[ta_mask] ** 2 / np.maximum(np.sinh(x[ta_mask]), 1e-12)
+            Gamma[branch_is_ta, :] += add
+    if np.any(branch_is_loto):
+        Gamma[branch_is_loto, :] = 1.0 / max(tau_LTO_ps * 1e-12, 1e-30)
+    Gamma += A_imp * w**4 + B_imp * w**2 + C_imp
+    if bool(get_or(get_or(opts, "scatter", {}), "pb_on", False)):
+        B, Nw = w.shape
+        branch_grid = np.repeat(np.arange(1, B + 1, dtype=np.int64), Nw)
+        q_flat, vabs_flat = q_vabs_from_w_table(spec, w.reshape(-1), branch_grid)
+        q_grid = q_flat.reshape(B, Nw)
+        vabs_grid = vabs_flat.reshape(B, Nw)
+        Tsi = float(get_or(opts, "PB_Tsi", 0.0))
+        if Tsi > 0.0:
+            delta = float(get_or(opts, "PB_Delta", 0.0))
+            cos2 = 1.0 / 3.0
+            p_spec = np.exp(-4.0 * (np.maximum(q_grid, 0.0) * delta) ** 2 * cos2)
+            ff = (1.0 - p_spec) / (1.0 + p_spec)
+            Gamma += vabs_grid / max(Tsi, 1e-12) * ff
+        else:
+            bulk_L = float(get_or(opts, "PB_bulk_L", 0.0))
+            bulk_F = float(get_or(opts, "PB_bulk_F", 0.0))
+            if bulk_L > 0.0:
+                Gamma += vabs_grid / max(bulk_L * bulk_F, 1e-12)
+    return np.maximum(np.nan_to_num(Gamma, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+
+
+def build_pp_scattering_T_lookup(spec: dict[str, Any], opts: dict[str, Any], cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = cfg or {}
+    T_min = float(get_or(cfg, "T_min", 1.0))
+    T_max = float(get_or(cfg, "T_max", 2000.0))
+    nT = int(get_or(cfg, "nT", 2001))
+    T = np.linspace(T_min, T_max, nT, dtype=np.float64)
+    DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
+    w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
+    dw = ensure_2d_dw(spec)
+    S = np.zeros(T.size, dtype=np.float64)
+    Sb = np.zeros((T.size, DOS.shape[0]), dtype=np.float64)
+    for i, Ti in enumerate(T):
+        Gamma = scattering_rate_table_at_T(spec, float(Ti), opts, None)
+        nbe = bose_occupation(w, float(Ti))
+        dS = DOS * (HBAR * w) * Gamma * nbe * dw
+        Sb[i, :] = dS.sum(axis=1)
+        S[i] = Sb[i, :].sum()
+    S_mono = np.maximum.accumulate(S)
+    keep = np.ones(S_mono.size, dtype=bool)
+    keep[1:] = np.diff(S_mono) > 0
+    if np.count_nonzero(keep) < 2:
+        keep[:] = True
+    S_unique = S_mono[keep]
+    T_unique = T[keep]
+    inv_interp = PchipInterpolator(S_unique, T_unique, extrapolate=True)
+    S_interp = PchipInterpolator(T, S, extrapolate=True)
+    return {
+        "T": T,
+        "S": S,
+        "Sb": Sb,
+        "S_mono": S_unique,
+        "T_mono": T_unique,
+        "inv_interp": inv_interp,
+        "S_interp": S_interp,
+        "inv": lambda Starget: np.asarray(inv_interp(np.clip(np.asarray(Starget, dtype=np.float64), S_unique[0], S_unique[-1]))),
+    }
+
+
 def infer_Nc(mesh: dict[str, Any]) -> int:
     if mesh.get("Nc") is not None:
         return int(mesh["Nc"])
@@ -1595,38 +1748,111 @@ def load_reference_temperature_field(mesh: dict[str, Any], opts: dict[str, Any],
 
 def load_volume_heat_source_field(mesh: dict[str, Any], opts: dict[str, Any], default_qvol: float | np.ndarray = 0.0) -> tuple[np.ndarray, dict[str, Any]]:
     Nc = infer_Nc(mesh)
+    Vc = cell_volumes(mesh)
     if np.isscalar(default_qvol):
         qvol = np.full(Nc, float(default_qvol), dtype=np.float64)
     else:
         qvol = np.asarray(default_qvol, dtype=np.float64).reshape(-1)
         if qvol.size != Nc:
             raise ValueError("default_qvol must be scalar or Nc-by-1")
-    meta = {"source": "", "used_file": False, "q_min": float(qvol.min()), "q_mean": float(qvol.mean()), "q_max": float(qvol.max())}
+    meta = {
+        "source": "",
+        "used_file": False,
+        "format": "",
+        "n_entries": 0,
+        "n_nonzero_cells": int(np.count_nonzero(qvol)),
+        "q_min": float(qvol.min()),
+        "q_mean": float(qvol.mean()),
+        "q_max": float(qvol.max()),
+        "q_total_W": float(np.sum(qvol * Vc)),
+    }
     filepath = get_or(opts, "volume_heat_source_file", "")
     if not filepath:
         return qvol, meta
-    data = read_numeric_matrix(filepath, delimiter=",")
-    if data.shape[1] < 4:
-        raise ValueError(f"{filepath} must have four columns")
-    idx = np.round(data[:, 0]).astype(np.int64)
-    idy = np.round(data[:, 1]).astype(np.int64)
-    idz = np.round(data[:, 2]).astype(np.int64)
-    qsrc = data[:, 3].astype(np.float64)
-    if idx.size == 0:
-        raise ValueError(f"{filepath} contains no valid numeric rows")
-    if np.any((idx < 1) | (idx > mesh["Nx"]) | (idy < 1) | (idy > mesh["Ny"]) | (idz < 1) | (idz > mesh["Nz"])):
-        raise ValueError(f"indices in {filepath} exceed mesh bounds")
-    lin = sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], idx, idy, idz)
-    if np.unique(lin).size != lin.size:
-        raise ValueError(f"duplicate cell indices found in {filepath}")
-    qvol[lin - 1] = qsrc
-    if lin.size != Nc:
-        raise ValueError(f"{filepath} does not cover all mesh cells")
+    rows: list[list[float]] = []
+    for iline, line in enumerate(read_clean_lines(filepath), start=1):
+        tokens = [tok for tok in re.split(r"[\s,]+", line) if tok]
+        try:
+            values = [float(tok) for tok in tokens]
+        except ValueError as exc:
+            raise ValueError(f"non-numeric value found in {filepath} line {iline}: {line}") from exc
+        rows.append(values)
+    if not rows:
+        return qvol, meta
+    widths = {len(row) for row in rows}
+    if len(widths) != 1 or next(iter(widths)) not in {4, 7}:
+        raise ValueError(
+            f"{filepath} must use either 4 columns (idx,idy,idz,qvol) or 7 columns "
+            "(Xmin,Xmax,Ymin,Ymax,Zmin,Zmax,P_W_m3)"
+        )
+    ncol = next(iter(widths))
+    if ncol == 4:
+        data = np.asarray(rows, dtype=np.float64)
+        idx = np.round(data[:, 0]).astype(np.int64)
+        idy = np.round(data[:, 1]).astype(np.int64)
+        idz = np.round(data[:, 2]).astype(np.int64)
+        qsrc = data[:, 3].astype(np.float64)
+        if np.any((idx < 1) | (idx > mesh["Nx"]) | (idy < 1) | (idy > mesh["Ny"]) | (idz < 1) | (idz > mesh["Nz"])):
+            raise ValueError(f"indices in {filepath} exceed mesh bounds")
+        lin = sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], idx, idy, idz).astype(np.int64)
+        np.add.at(qvol, lin - 1, qsrc)
+        meta["format"] = "cell_list"
+        meta["n_entries"] = int(data.shape[0])
+    else:
+        X = np.asarray(mesh["x_edges"], dtype=np.float64)
+        Y = np.asarray(mesh["y_edges"], dtype=np.float64)
+        Z = np.asarray(mesh["z_edges"], dtype=np.float64)
+        length_scale = float(get_or(opts, "volume_heat_source_length_scale", 1e-6))
+        domain = np.array([X[0], X[-1], Y[0], Y[-1], Z[0], Z[-1]], dtype=np.float64)
+        tol = 1e-12 * max(1.0, float(np.max(np.abs(domain))))
+        for iline, row in enumerate(rows, start=1):
+            bounds_input = np.asarray(row[:6], dtype=np.float64)
+            qsrc = float(row[6])
+            if np.any(~np.isfinite(bounds_input)) or not np.isfinite(qsrc):
+                raise ValueError(f"invalid region source row in {filepath} line {iline}")
+            if np.any(bounds_input[1::2] < bounds_input[0::2]):
+                raise ValueError(f"volume heat source bounds must satisfy min<=max in {filepath} line {iline}")
+            bounds = bounds_input * length_scale
+            if (
+                bounds[0] < domain[0] - tol
+                or bounds[1] > domain[1] + tol
+                or bounds[2] < domain[2] - tol
+                or bounds[3] > domain[3] + tol
+                or bounds[4] < domain[4] - tol
+                or bounds[5] > domain[5] + tol
+            ):
+                raise ValueError(f"volume heat source region exceeds mesh bounds in {filepath} line {iline}")
+            bounds[0] = max(bounds[0], domain[0])
+            bounds[1] = min(bounds[1], domain[1])
+            bounds[2] = max(bounds[2], domain[2])
+            bounds[3] = min(bounds[3], domain[3])
+            bounds[4] = max(bounds[4], domain[4])
+            bounds[5] = min(bounds[5], domain[5])
+            ox = np.maximum(np.minimum(X[1:], bounds[1]) - np.maximum(X[:-1], bounds[0]), 0.0)
+            oy = np.maximum(np.minimum(Y[1:], bounds[3]) - np.maximum(Y[:-1], bounds[2]), 0.0)
+            oz = np.maximum(np.minimum(Z[1:], bounds[5]) - np.maximum(Z[:-1], bounds[4]), 0.0)
+            ix = np.flatnonzero(ox > 0.0)
+            iy = np.flatnonzero(oy > 0.0)
+            iz = np.flatnonzero(oz > 0.0)
+            if ix.size == 0 or iy.size == 0 or iz.size == 0:
+                continue
+            for kz in iz:
+                for ky in iy:
+                    for kx in ix:
+                        cid = int(sub2ind(mesh["Nx"], mesh["Ny"], mesh["Nz"], kx + 1, ky + 1, kz + 1))
+                        overlap = float(ox[kx] * oy[ky] * oz[kz])
+                        if overlap <= 0.0:
+                            continue
+                        qvol[cid - 1] += qsrc * overlap / max(Vc[cid - 1], REALMIN)
+        meta["format"] = "box_regions"
+        meta["n_entries"] = len(rows)
     meta["source"] = str(as_path(filepath))
     meta["used_file"] = True
+    meta["n_nonzero_cells"] = int(np.count_nonzero(qvol))
     meta["q_min"] = float(qvol.min())
     meta["q_mean"] = float(qvol.mean())
     meta["q_max"] = float(qvol.max())
+    meta["q_total_W"] = float(np.sum(qvol * Vc))
     return qvol, meta
 
 
@@ -1719,6 +1945,8 @@ def sample_particles_for_cells(
         "cell_ids": cell_ids.copy(),
         "Nexp_tot": 0.0,
         "Nsp_tot": 0,
+        "E_eff_used": float(get_or(opts, "E_eff", 1e-18)),
+        "fixed_target_particles": 0,
         "target_temperature": Tcell.copy(),
         "reference_temperature": Tref_cell.copy(),
     }
@@ -1730,6 +1958,8 @@ def sample_particles_for_cells(
     if mode_name.lower() == "deviational" and Tref_cell.size != cell_ids.size:
         raise ValueError("Tref_cell size must match cell_ids in deviational mode")
     E_eff = float(get_or(opts, "E_eff", 1e-18))
+    initial_particles_fixed = max(0, int(get_or(opts, "initial_particles_fixed", 0)))
+    use_fixed_initial_particles = bool(id_start == 0 and initial_particles_fixed > 0)
     use_bin_center_w = bool(get_or(opts, "use_bin_center_w", True))
     max_particles = int(get_or(opts, "max_particles", np.iinfo(np.int64).max))
     Vc_all = cell_volumes(mesh)
@@ -1761,10 +1991,19 @@ def sample_particles_for_cells(
     total_weight = float(cell_weight.sum())
     if total_weight <= 0:
         return ParticleBlock.empty(), info
-    Nexp_tot = total_weight / E_eff
-    Nsp_tot = int(np.floor(Nexp_tot) + (np.random.random() < (Nexp_tot - np.floor(Nexp_tot))))
+    if use_fixed_initial_particles:
+        Nsp_tot = int(initial_particles_fixed)
+        if Nsp_tot <= 0:
+            return ParticleBlock.empty(), info
+        E_eff = total_weight / max(float(Nsp_tot), REALMIN)
+        Nexp_tot = float(Nsp_tot)
+        info["fixed_target_particles"] = int(Nsp_tot)
+    else:
+        Nexp_tot = total_weight / E_eff
+        Nsp_tot = int(np.floor(Nexp_tot) + (np.random.random() < (Nexp_tot - np.floor(Nexp_tot))))
     info["Nexp_tot"] = float(Nexp_tot)
     info["Nsp_tot"] = int(Nsp_tot)
+    info["E_eff_used"] = float(E_eff)
     if Nsp_tot <= 0:
         return ParticleBlock.empty(), info
     if Nsp_tot > max_particles:
@@ -1843,17 +2082,19 @@ def init_state_energy(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str
         "reference_temperature_meta": Tref_meta,
         "T_init_cell": Tcell,
         "initial_temperature_meta": Tmeta,
-        "U_density_mean": sample_info["Nexp_tot"] * float(get_or(opts, "E_eff", 1e-18)) / max(Vdom, REALMIN),
-        "U_total": sample_info["Nexp_tot"] * float(get_or(opts, "E_eff", 1e-18)),
+        "U_density_mean": sample_info["Nexp_tot"] * float(sample_info.get("E_eff_used", get_or(opts, "E_eff", 1e-18))) / max(Vdom, REALMIN),
+        "U_total": sample_info["Nexp_tot"] * float(sample_info.get("E_eff_used", get_or(opts, "E_eff", 1e-18))),
         "Nexp_tot": sample_info["Nexp_tot"],
         "Nsp_tot": sample_info["Nsp_tot"],
+        "E_eff_used": float(sample_info.get("E_eff_used", get_or(opts, "E_eff", 1e-18))),
+        "fixed_target_particles": int(sample_info.get("fixed_target_particles", 0)),
         "Nc": infer_Nc(mesh),
         "Vdom": Vdom,
     }
     return SimulationState(
         p=p,
-        WE=float(get_or(opts, "E_eff", 1e-18)),
-        Wp=float(get_or(opts, "E_eff", 1e-18)),
+        WE=float(sample_info.get("E_eff_used", get_or(opts, "E_eff", 1e-18))),
+        Wp=float(sample_info.get("E_eff_used", get_or(opts, "E_eff", 1e-18))),
         Nsp_cell=Nsp_cell,
         enhance_factor=enhance_factor_array(opts, infer_Nc(mesh)),
         info=info,
@@ -1931,6 +2172,95 @@ def update_temperature_from_energy(
     return Tnew, aux
 
 
+def active_total_scattering_rate_for_particles(opts: dict[str, Any], r_tau: np.ndarray) -> np.ndarray:
+    rates = np.asarray(r_tau, dtype=np.float64)
+    if rates.size == 0:
+        return np.zeros(rates.shape[0] if rates.ndim else 0, dtype=np.float64)
+    r_all = np.maximum(rates, 0.0).copy()
+    if r_all.ndim != 2:
+        return np.zeros(0, dtype=np.float64)
+    if not bool(get_or(get_or(opts, "scatter", {}), "pb_on", False)) and r_all.shape[1] >= 6:
+        r_all[:, 5] = 0.0
+    return np.sum(r_all, axis=1)
+
+
+def pp_only_rate_for_particles(branch_id: np.ndarray, r_tau: np.ndarray, spec: dict[str, Any]) -> np.ndarray:
+    b = np.asarray(branch_id, dtype=np.int32).reshape(-1)
+    rates = np.asarray(r_tau, dtype=np.float64)
+    if b.size == 0 or rates.size == 0:
+        return np.zeros(b.size, dtype=np.float64)
+    rLA, rTAN, rTAU, rLTO = [np.maximum(rates[:, i], 0.0) for i in range(4)]
+    rPP = np.zeros(b.size, dtype=np.float64)
+    bi = b.astype(np.int64) - 1
+    valid = (bi >= 0) & (bi < len(np.asarray(spec["branch_is_la"], dtype=np.bool_)))
+    is_la = np.zeros(b.size, dtype=bool)
+    is_ta = np.zeros(b.size, dtype=bool)
+    is_loto = np.zeros(b.size, dtype=bool)
+    if np.any(valid):
+        branch_is_la = np.asarray(spec["branch_is_la"], dtype=np.bool_)
+        branch_is_ta = np.asarray(spec["branch_is_ta"], dtype=np.bool_)
+        branch_is_loto = np.asarray(spec["branch_is_loto"], dtype=np.bool_)
+        is_la[valid] = branch_is_la[bi[valid]]
+        is_ta[valid] = branch_is_ta[bi[valid]]
+        is_loto[valid] = branch_is_loto[bi[valid]]
+    rPP[is_la] = rLA[is_la]
+    rPP[is_ta] = rTAN[is_ta] + rTAU[is_ta]
+    rPP[is_loto] = rLTO[is_loto]
+    other = ~(is_la | is_ta | is_loto)
+    if np.any(other):
+        # Fall back to the sum of modeled inelastic channels for any branch names
+        # that do not match the LA/TA/LO-TO labels.
+        rPP[other] = rLA[other] + rTAN[other] + rTAU[other] + rLTO[other]
+    return rPP
+
+
+def update_pp_scattering_temperature_from_energy(
+    state: SimulationState,
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    opts: dict[str, Any],
+    r_tau: np.ndarray,
+    lut: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if lut is None:
+        lut = build_pp_scattering_T_lookup(spec, opts, tloc_lookup_cfg_from_opts(opts))
+    Vc = cell_volumes(mesh)
+    Nc = Vc.size
+    if len(state.p) == 0:
+        S_cell = np.zeros(Nc, dtype=np.float64)
+    else:
+        valid = (state.p.cell >= 1) & (state.p.cell <= Nc)
+        rTOT = active_total_scattering_rate_for_particles(opts, r_tau)
+        S_cell = np.bincount(
+            state.p.cell[valid].astype(np.int64) - 1,
+            weights=state.p.E[valid] * rTOT[valid],
+            minlength=Nc,
+        ).astype(np.float64)
+    Slocal = np.zeros(Nc, dtype=np.float64)
+    mask = Vc > 0
+    Slocal[mask] = S_cell[mask] / Vc[mask]
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+        Tref_cell = reference_temperature_from_state(state, opts, Nc)
+        Tref_clamped = np.clip(Tref_cell, lut["T"][0], lut["T"][-1])
+        Sref = np.asarray(lut["S_interp"](Tref_clamped), dtype=np.float64)
+        Sabs = Slocal + Sref
+    else:
+        Sabs = Slocal
+    Smin, Smax = float(lut["S_mono"][0]), float(lut["S_mono"][-1])
+    Scl = np.clip(Sabs, Smin, Smax)
+    Tnew = np.asarray(lut["inv_interp"](Scl), dtype=np.float64)
+    aux = {
+        "S_cell": S_cell,
+        "Vcell": Vc,
+        "Slocal": Slocal,
+        "Sabs": Sabs,
+        "clip_low": float(np.mean(Sabs < Smin)),
+        "clip_high": float(np.mean(Sabs > Smax)),
+        "LUT": lut,
+    }
+    return Tnew, aux
+
+
 def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(get_or(opts, "output", {}))
     out_cfg = {
@@ -1940,16 +2270,12 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
         "run_tag": "",
         "inputs_dir": "",
         "steps_dir": "",
+        "toc_dir": "",
         "step_history_file": "",
         "run_wallclock_tic": time.perf_counter(),
         "monitors": [],
         "monitor_warnings": [],
-        "cum_energy": np.zeros(0, dtype=np.float64),
-        "interval_energy": np.zeros(0, dtype=np.float64),
-        "cum_crossings_pos": np.zeros(0, dtype=np.float64),
-        "cum_crossings_neg": np.zeros(0, dtype=np.float64),
-        "interval_crossings_pos": np.zeros(0, dtype=np.float64),
-        "interval_crossings_neg": np.zeros(0, dtype=np.float64),
+        **init_monitor_output_accumulators(0),
         "cum_time": 0.0,
         "interval_time": 0.0,
     }
@@ -1965,8 +2291,10 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
     run_dir.mkdir(parents=True, exist_ok=True)
     inputs_dir = run_dir / "inputs"
     steps_dir = run_dir / "steps"
+    toc_dir = run_dir / "Toc"
     inputs_dir.mkdir(exist_ok=True)
     steps_dir.mkdir(exist_ok=True)
+    toc_dir.mkdir(exist_ok=True)
     monitors, warnings = load_heat_flux_monitors(mesh, cfg)
     nmon = len(monitors)
     out_cfg.update(
@@ -1975,15 +2303,11 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
             "run_tag": run_tag,
             "inputs_dir": str(inputs_dir),
             "steps_dir": str(steps_dir),
+            "toc_dir": str(toc_dir),
             "step_history_file": str(run_dir / "step_history.txt"),
             "monitors": monitors,
             "monitor_warnings": warnings,
-            "cum_energy": np.zeros(nmon, dtype=np.float64),
-            "interval_energy": np.zeros(nmon, dtype=np.float64),
-            "cum_crossings_pos": np.zeros(nmon, dtype=np.float64),
-            "cum_crossings_neg": np.zeros(nmon, dtype=np.float64),
-            "interval_crossings_pos": np.zeros(nmon, dtype=np.float64),
-            "interval_crossings_neg": np.zeros(nmon, dtype=np.float64),
+            **init_monitor_output_accumulators(nmon),
         }
     )
     snapshot_specs = [
@@ -2006,7 +2330,22 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
         shutil.copyfile(src_path, dst)
         manifest.append([kind, str(src_path.resolve()), str(dst.resolve())])
     write_csv_rows(inputs_dir / "input_manifest.txt", manifest)
-    write_csv_rows(out_cfg["step_history_file"], [["step", "dt_s", "elapsed_time_s", "interval_time_s", "wall_clock_elapsed_s", "Np", "T_min_K", "T_mean_K", "T_max_K"]])
+    write_csv_rows(
+        out_cfg["step_history_file"],
+        [[
+            "step",
+            "dt_s",
+            "dt_cfl_s",
+            "dt_scat_s",
+            "elapsed_time_s",
+            "interval_time_s",
+            "wall_clock_elapsed_s",
+            "Np",
+            "T_min_K",
+            "T_mean_K",
+            "T_max_K",
+        ]],
+    )
     write_csv_rows(
         run_dir / "run_manifest.txt",
         [
@@ -2014,8 +2353,10 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
             ["run_tag", run_tag],
             ["run_dir", str(run_dir.resolve())],
             ["every_n_steps", out_cfg["every_n_steps"]],
+            ["toc_dir", str(toc_dir.resolve())],
             ["heat_flux_monitor_file", str(get_or(cfg, "heat_flux_monitor_file", ""))],
             ["monitor_length_scale", get_or(cfg, "monitor_length_scale", np.nan)],
+            ["volume_heat_source_length_scale", get_or(opts, "volume_heat_source_length_scale", np.nan)],
             ["created_at", time.strftime("%Y-%m-%d %H:%M:%S")],
         ],
     )
@@ -2029,24 +2370,349 @@ def prepare_run_output(mesh: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
     return out_cfg
 
 
+def export_particle_mfp_cdf(
+    output_png: str | Path,
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    spec: dict[str, Any],
+    x_label: str = "Mean Free Path (nm)",
+    plot_title: str = "Particle Mean Free Path CDF",
+) -> str:
+    output_png = Path(output_png)
+    output_csv = output_png.with_suffix(".csv")
+    if len(state.p) == 0:
+        return ""
+    rates = precompute_relax_times(state, np.asarray(Tcell, dtype=np.float64), opts, spec)
+    if rates.size == 0:
+        return ""
+    rate_total = np.sum(np.maximum(rates, 0.0), axis=1)
+    vabs = np.asarray(state.p.vabs, dtype=np.float64).reshape(-1)
+    n_ph_weight = np.abs(np.asarray(state.p.n_ph, dtype=np.float64).reshape(-1))
+    valid = (
+        np.isfinite(rate_total)
+        & (rate_total > 0.0)
+        & np.isfinite(vabs)
+        & (vabs > 0.0)
+        & np.isfinite(n_ph_weight)
+        & (n_ph_weight > 0.0)
+    )
+    if not np.any(valid):
+        return ""
+    mfp_m = vabs[valid] / rate_total[valid]
+    wgt = n_ph_weight[valid]
+    finite = np.isfinite(mfp_m) & (mfp_m > 0.0) & np.isfinite(wgt) & (wgt > 0.0)
+    mfp_m = mfp_m[finite]
+    wgt = wgt[finite]
+    if mfp_m.size == 0 or wgt.size == 0:
+        return ""
+    order = np.argsort(mfp_m, kind="stable")
+    mfp_nm = mfp_m[order] * 1e9
+    wgt = wgt[order]
+    cdf = np.cumsum(wgt) / np.sum(wgt)
+    weighted_mean_nm = float(np.sum(mfp_nm * wgt) / np.sum(wgt))
+    median_nm = float(mfp_nm[min(int(np.searchsorted(cdf, 0.5, side="left")), mfp_nm.size - 1)])
+    p90_nm = float(mfp_nm[min(int(np.searchsorted(cdf, 0.9, side="left")), mfp_nm.size - 1)])
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    write_csv_rows(
+        output_csv,
+        [["mfp_nm", "cdf", "n_ph_weight"], *np.column_stack((mfp_nm, cdf, wgt)).tolist()],
+    )
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return str(output_csv)
+    fig, ax = plt.subplots(figsize=(7.0, 4.8), constrained_layout=True)
+    ax.plot(mfp_nm, cdf, color="#0f4c81", linewidth=2.2)
+    ax.set_xscale("log")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("CDF")
+    ax.set_title(plot_title)
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.7, alpha=0.35)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.18)
+    ax.axvline(median_nm, color="#bf360c", linestyle="--", linewidth=1.2, alpha=0.9, label=f"median={median_nm:.3g} nm")
+    ax.legend(loc="lower right", frameon=False)
+    ax.text(
+        0.03,
+        0.08,
+        "\n".join(
+            (
+                f"Nsp = {mfp_nm.size}",
+                f"sum|n_ph| = {np.sum(wgt):.3g}",
+                f"mean = {weighted_mean_nm:.3g} nm",
+                f"median = {median_nm:.3g} nm",
+                f"p90 = {p90_nm:.3g} nm",
+            )
+        ),
+        transform=ax.transAxes,
+        fontsize=9.5,
+        color="#374151",
+        bbox={"boxstyle": "round,pad=0.28", "facecolor": "#f8fafc", "edgecolor": "#d1d5db", "alpha": 0.95},
+    )
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_png)
+
+
+def export_particle_total_scattering_rate_cdf(
+    output_png: str | Path,
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    spec: dict[str, Any],
+    x_label: str = "Total Scattering Rate (s$^{-1}$)",
+    plot_title: str = "Total Scattering Rate CDF",
+) -> str:
+    output_png = Path(output_png)
+    if len(state.p) == 0:
+        return ""
+    rates = precompute_relax_times(state, np.asarray(Tcell, dtype=np.float64), opts, spec)
+    if rates.size == 0:
+        return ""
+    rate_total = active_total_scattering_rate_for_particles(opts, rates)
+    valid = np.isfinite(rate_total) & (rate_total > 0.0)
+    if not np.any(valid):
+        return ""
+    rate_sorted = np.sort(rate_total[valid])
+    cdf = np.arange(1, rate_sorted.size + 1, dtype=np.float64) / float(rate_sorted.size)
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return ""
+    q_levels = np.array([0.1, 0.5, 0.9], dtype=np.float64)
+    q_values = np.quantile(rate_sorted, q_levels)
+    fig, ax = plt.subplots(figsize=(7.0, 4.8), constrained_layout=True)
+    ax.plot(rate_sorted, cdf, color="#14532d", linewidth=2.2)
+    ax.set_xscale("log")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("CDF")
+    ax.set_title(plot_title)
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.7, alpha=0.35)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.18)
+    for q_level, q_value in zip(q_levels, q_values):
+        ax.axhline(q_level, color="#64748b", linestyle=":", linewidth=0.9, alpha=0.9)
+        ax.axvline(q_value, color="#b45309", linestyle="--", linewidth=1.1, alpha=0.9)
+        ax.scatter([q_value], [q_level], color="#b45309", s=18, zorder=3)
+        ax.annotate(
+            f"{q_level:.1f}: {q_value:.3g}",
+            xy=(q_value, q_level),
+            xytext=(6, 4),
+            textcoords="offset points",
+            fontsize=8.8,
+            color="#7c2d12",
+        )
+    ax.text(
+        0.03,
+        0.08,
+        "\n".join(
+            (
+                f"N = {rate_sorted.size}",
+                f"q0.1 = {q_values[0]:.3g} s^-1",
+                f"q0.5 = {q_values[1]:.3g} s^-1",
+                f"q0.9 = {q_values[2]:.3g} s^-1",
+            )
+        ),
+        transform=ax.transAxes,
+        fontsize=9.2,
+        color="#374151",
+        bbox={"boxstyle": "round,pad=0.28", "facecolor": "#f8fafc", "edgecolor": "#d1d5db", "alpha": 0.95},
+    )
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_png)
+
+
+def export_particle_omega_tau_distribution(
+    output_png: str | Path,
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    spec: dict[str, Any],
+    plot_title: str = "Particle Omega-Tau Distribution",
+) -> str:
+    output_png = Path(output_png)
+    if len(state.p) == 0:
+        return ""
+    rates = precompute_relax_times(state, np.asarray(Tcell, dtype=np.float64), opts, spec)
+    if rates.size == 0:
+        return ""
+    rate_total = np.sum(np.maximum(rates, 0.0), axis=1)
+    omega = np.asarray(state.p.w, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(rate_total) & (rate_total > 0.0) & np.isfinite(omega) & (omega > 0.0)
+    if not np.any(valid):
+        return ""
+    tau_s = 1.0 / rate_total[valid]
+    omega_valid = omega[valid]
+    finite_tau = np.isfinite(tau_s) & (tau_s > 0.0)
+    tau_s = tau_s[finite_tau]
+    omega_valid = omega_valid[finite_tau]
+    if tau_s.size == 0:
+        return ""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return ""
+    fig, ax = plt.subplots(figsize=(7.2, 5.0), constrained_layout=True)
+    hb = ax.hexbin(
+        omega_valid,
+        tau_s,
+        gridsize=70,
+        bins="log",
+        mincnt=1,
+        linewidths=0.0,
+        cmap="viridis",
+    )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    def log_bounds(data: np.ndarray) -> tuple[float, float]:
+        vals = np.asarray(data, dtype=np.float64)
+        vals = vals[np.isfinite(vals) & (vals > 0.0)]
+        if vals.size == 0:
+            return 1.0, 10.0
+        lo = float(np.min(vals))
+        hi = float(np.max(vals))
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0.0 or hi <= 0.0:
+            return 1.0, 10.0
+        if hi <= lo:
+            return lo / 1.5, hi * 1.5
+        lo_q = float(np.quantile(vals, 0.002))
+        hi_q = float(np.quantile(vals, 0.998))
+        lo_use = max(lo_q, np.finfo(np.float64).tiny)
+        hi_use = max(hi_q, lo_use * 1.01)
+        pad = 10.0 ** 0.05
+        return lo_use / pad, hi_use * pad
+
+    xlo, xhi = log_bounds(omega_valid)
+    ylo, yhi = log_bounds(tau_s)
+    ax.set_xlim(xlo, xhi)
+    ax.set_ylim(ylo, yhi)
+    ax.set_xlabel("Angular Frequency $\\omega$ (rad/s)")
+    ax.set_ylabel("Relaxation Time $\\tau$ (s)")
+    ax.set_title(plot_title)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.7, alpha=0.35)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.18)
+    cb = fig.colorbar(hb, ax=ax)
+    cb.set_label("Count")
+    ax.text(
+        0.03,
+        0.05,
+        "\n".join(
+            (
+                f"N = {tau_s.size}",
+                f"$\\omega_{{med}}$ = {float(np.median(omega_valid)):.3g} rad/s",
+                f"$\\tau_{{med}}$ = {float(np.median(tau_s)):.3g} s",
+            )
+        ),
+        transform=ax.transAxes,
+        fontsize=9.5,
+        color="#374151",
+        bbox={"boxstyle": "round,pad=0.28", "facecolor": "#f8fafc", "edgecolor": "#d1d5db", "alpha": 0.95},
+    )
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_png)
+
+
+def export_initial_mfp_cdf(
+    out_cfg: dict[str, Any],
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    spec: dict[str, Any],
+) -> str:
+    if not out_cfg.get("enabled", False):
+        return ""
+    run_dir = Path(str(out_cfg.get("run_dir", "")))
+    if not run_dir:
+        return ""
+    return export_particle_mfp_cdf(
+        run_dir / "initial_mfp_cdf.png",
+        state,
+        Tcell,
+        opts,
+        spec,
+        x_label="Initial Mean Free Path (nm)",
+        plot_title="Initial Particle Mean Free Path CDF",
+    )
+
+
+def export_initial_scattering_rate_cdf(
+    out_cfg: dict[str, Any],
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    spec: dict[str, Any],
+) -> str:
+    if not out_cfg.get("enabled", False):
+        return ""
+    run_dir = Path(str(out_cfg.get("run_dir", "")))
+    if not run_dir:
+        return ""
+    return export_particle_total_scattering_rate_cdf(
+        run_dir / "initial_total_scattering_rate_cdf.png",
+        state,
+        Tcell,
+        opts,
+        spec,
+        x_label="Initial Total Scattering Rate (s$^{-1}$)",
+        plot_title="Initial Total Scattering Rate CDF",
+    )
+
+
 def write_periodic_output(
     out_cfg: dict[str, Any],
     mesh: dict[str, Any],
     spec: dict[str, Any],
     state: SimulationState,
     Tprime: np.ndarray,
+    Toc: np.ndarray | None,
+    opts: dict[str, Any],
+    dt_info: dict[str, Any] | None,
     step: int,
     elapsed_time: float,
     dt_step: float,
 ) -> None:
     if not out_cfg.get("enabled", False):
         return
+
+    def fmt_sig5(value: Any) -> Any:
+        if isinstance(value, (str, bytes)):
+            return value
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+        try:
+            x = float(value)
+        except Exception:
+            return value
+        if not np.isfinite(x):
+            return str(x)
+        return f"{x:.5g}"
+
     step_dir = Path(out_cfg["steps_dir"]) / f"step_{step:05d}"
     step_dir.mkdir(parents=True, exist_ok=True)
     wall_clock_elapsed = time.perf_counter() - out_cfg["run_wallclock_tic"]
+    dt_info = {} if dt_info is None else dict(dt_info)
     I, J, K = np.meshgrid(np.arange(1, mesh["Nx"] + 1), np.arange(1, mesh["Ny"] + 1), np.arange(1, mesh["Nz"] + 1), indexing="ij")
     temp_data = np.column_stack((I.ravel(order="F"), J.ravel(order="F"), K.ravel(order="F"), np.asarray(Tprime, dtype=np.float64).reshape(-1)))
     write_csv_rows(step_dir / "temperature.txt", [["idxcell", "idycell", "idzcell", "Temperature"], *temp_data.tolist()])
+    if Toc is not None:
+        toc_data = np.column_stack((I.ravel(order="F"), J.ravel(order="F"), K.ravel(order="F"), np.asarray(Toc, dtype=np.float64).reshape(-1)))
+        write_csv_rows(Path(out_cfg["toc_dir"]) / f"step_{step:05d}.txt", [["idxcell", "idycell", "idzcell", "Toc"], *toc_data.tolist()])
     branch_rows = [["branch_id", "branch_name", "superparticle_count", "phonon_count_net", "phonon_count_abs", "energy_net_J", "energy_abs_J"]]
     if len(state.p) == 0:
         for ib, name in enumerate(spec["branches"], start=1):
@@ -2058,19 +2724,206 @@ def write_periodic_output(
             mask = state.p.b == ib
             branch_rows.append([ib, name, int(np.count_nonzero(mask)), float(n_net[mask].sum()), float(n_abs[mask].sum()), float(state.p.E[mask].sum()), float(np.abs(state.p.E[mask]).sum())])
     write_csv_rows(step_dir / "branch_stats.txt", branch_rows)
-    heat_rows = [["label", "requested_direction", "effective_normal", "area_m2", "elapsed_time_s", "interval_energy_net_J", "cumulative_energy_net_J", "flux_interval_W_m2", "flux_cumulative_W_m2", "interval_crossings_pos", "interval_crossings_neg", "cumulative_crossings_pos", "cumulative_crossings_neg", "warning"]]
+
+    def flux_from_energy(energy_value: float, area_value: float, time_value: float) -> float:
+        if time_value > 0 and area_value > 0:
+            return energy_value / (area_value * time_value)
+        return np.nan
+
+    def monitor_energy_row(label: str, stat_type: str, elapsed_time_value: float, window_time_value: float, pos_dir_pos: float, pos_dir_neg: float, neg_dir_pos: float, neg_dir_neg: float, warning: str) -> list[Any]:
+        total_abs = pos_dir_pos + pos_dir_neg + neg_dir_pos + neg_dir_neg
+        net_value = pos_dir_pos - pos_dir_neg - neg_dir_pos + neg_dir_neg
+        return [
+            label,
+            stat_type,
+            fmt_sig5(elapsed_time_value),
+            fmt_sig5(window_time_value),
+            fmt_sig5(pos_dir_pos),
+            fmt_sig5(pos_dir_neg),
+            fmt_sig5(neg_dir_pos),
+            fmt_sig5(neg_dir_neg),
+            fmt_sig5(total_abs),
+            fmt_sig5(net_value),
+            warning,
+        ]
+
+    def monitor_flux_row(label: str, stat_type: str, elapsed_time_value: float, window_time_value: float, pos_dir_pos: float, pos_dir_neg: float, neg_dir_pos: float, neg_dir_neg: float, warning: str) -> list[Any]:
+        total_abs = pos_dir_pos + pos_dir_neg + neg_dir_pos + neg_dir_neg
+        net_value = pos_dir_pos - pos_dir_neg - neg_dir_pos + neg_dir_neg
+        return [
+            label,
+            stat_type,
+            fmt_sig5(elapsed_time_value),
+            fmt_sig5(window_time_value),
+            fmt_sig5(pos_dir_pos),
+            fmt_sig5(pos_dir_neg),
+            fmt_sig5(neg_dir_pos),
+            fmt_sig5(neg_dir_neg),
+            fmt_sig5(total_abs),
+            fmt_sig5(net_value),
+            warning,
+        ]
+
+    energy_rows = [[
+        "label",
+        "stat_type",
+        "elapsed_time_s",
+        "window_time_s",
+        "pos_dir_pos_particle_J",
+        "pos_dir_neg_particle_abs_J",
+        "neg_dir_pos_particle_J",
+        "neg_dir_neg_particle_abs_J",
+        "total_abs_J",
+        "net_J",
+        "warning",
+    ]]
+    heat_rows = [[
+        "label",
+        "stat_type",
+        "elapsed_time_s",
+        "window_time_s",
+        "pos_dir_pos_particle_W_m2",
+        "pos_dir_neg_particle_abs_W_m2",
+        "neg_dir_pos_particle_W_m2",
+        "neg_dir_neg_particle_abs_W_m2",
+        "total_abs_W_m2",
+        "net_W_m2",
+        "warning",
+    ]]
     for i, mon in enumerate(out_cfg["monitors"]):
-        flux_interval = np.nan
-        if out_cfg["interval_time"] > 0 and mon["area"] > 0:
-            flux_interval = out_cfg["interval_energy"][i] / (mon["area"] * out_cfg["interval_time"])
-        flux_cumulative = np.nan
-        if elapsed_time > 0 and mon["area"] > 0:
-            flux_cumulative = out_cfg["cum_energy"][i] / (mon["area"] * elapsed_time)
-        heat_rows.append([mon["label"], mon["requested_direction"], mon["effective_normal"], mon["area"], elapsed_time, out_cfg["interval_energy"][i], out_cfg["cum_energy"][i], flux_interval, flux_cumulative, out_cfg["interval_crossings_pos"][i], out_cfg["interval_crossings_neg"][i], out_cfg["cum_crossings_pos"][i], out_cfg["cum_crossings_neg"][i], mon["warning"]])
+        area = float(mon["area"])
+        interval_t = float(out_cfg["interval_time"])
+        cum_t = float(elapsed_time)
+        interval_fwd_pos = float(out_cfg["interval_energy_fwd_pos"][i])
+        interval_fwd_neg = float(out_cfg["interval_energy_fwd_neg"][i])
+        interval_bwd_pos = float(out_cfg["interval_energy_bwd_pos"][i])
+        interval_bwd_neg = float(out_cfg["interval_energy_bwd_neg"][i])
+        cumulative_fwd_pos = float(out_cfg["cum_energy_fwd_pos"][i])
+        cumulative_fwd_neg = float(out_cfg["cum_energy_fwd_neg"][i])
+        cumulative_bwd_pos = float(out_cfg["cum_energy_bwd_pos"][i])
+        cumulative_bwd_neg = float(out_cfg["cum_energy_bwd_neg"][i])
+        energy_rows.append(
+            monitor_energy_row(
+                mon["label"],
+                "interval",
+                cum_t,
+                interval_t,
+                interval_fwd_pos,
+                interval_fwd_neg,
+                interval_bwd_pos,
+                interval_bwd_neg,
+                mon["warning"],
+            )
+        )
+        energy_rows.append(
+            monitor_energy_row(
+                mon["label"],
+                "cumulative",
+                cum_t,
+                cum_t,
+                cumulative_fwd_pos,
+                cumulative_fwd_neg,
+                cumulative_bwd_pos,
+                cumulative_bwd_neg,
+                mon["warning"],
+            )
+        )
+        heat_rows.append(
+            monitor_flux_row(
+                mon["label"],
+                "interval",
+                cum_t,
+                interval_t,
+                flux_from_energy(interval_fwd_pos, area, interval_t),
+                flux_from_energy(interval_fwd_neg, area, interval_t),
+                flux_from_energy(interval_bwd_pos, area, interval_t),
+                flux_from_energy(interval_bwd_neg, area, interval_t),
+                mon["warning"],
+            )
+        )
+        heat_rows.append(
+            monitor_flux_row(
+                mon["label"],
+                "cumulative",
+                cum_t,
+                cum_t,
+                flux_from_energy(cumulative_fwd_pos, area, cum_t),
+                flux_from_energy(cumulative_fwd_neg, area, cum_t),
+                flux_from_energy(cumulative_bwd_pos, area, cum_t),
+                flux_from_energy(cumulative_bwd_neg, area, cum_t),
+                mon["warning"],
+            )
+        )
+    write_csv_rows(step_dir / "heat_energy.txt", energy_rows)
     write_csv_rows(step_dir / "heat_flux.txt", heat_rows)
-    write_csv_rows(step_dir / "step_info.txt", [["step", "dt_s", "elapsed_time_s", "interval_time_s", "wall_clock_elapsed_s", "Np", "T_min_K", "T_mean_K", "T_max_K"], [step, dt_step, elapsed_time, out_cfg["interval_time"], wall_clock_elapsed, len(state.p), float(np.min(Tprime)), float(np.mean(Tprime)), float(np.max(Tprime))]])
+    write_csv_rows(
+        step_dir / "step_info.txt",
+        [[
+            "step",
+            "dt_s",
+            "dt_cfl_s",
+            "dt_scat_s",
+            "elapsed_time_s",
+            "interval_time_s",
+            "wall_clock_elapsed_s",
+            "Np",
+            "T_min_K",
+            "T_mean_K",
+            "T_max_K",
+        ], [
+            step,
+            dt_step,
+            float(get_or(dt_info, "dt_cfl", np.nan)),
+            float(get_or(dt_info, "dt_prob", np.nan)),
+            elapsed_time,
+            out_cfg["interval_time"],
+            wall_clock_elapsed,
+            len(state.p),
+            float(np.min(Tprime)),
+            float(np.mean(Tprime)),
+            float(np.max(Tprime)),
+        ]],
+    )
+    export_particle_mfp_cdf(
+        step_dir / "mfp_cdf.png",
+        state,
+        Tprime,
+        opts,
+        spec,
+        x_label="Mean Free Path (nm)",
+        plot_title=f"Particle Mean Free Path CDF @ step {step}",
+    )
+    export_particle_total_scattering_rate_cdf(
+        step_dir / "total_scattering_rate_cdf.png",
+        state,
+        Tprime,
+        opts,
+        spec,
+        x_label="Total Scattering Rate (s$^{-1}$)",
+        plot_title=f"Total Scattering Rate CDF @ step {step}",
+    )
+    export_particle_omega_tau_distribution(
+        step_dir / "omega_tau_distribution.png",
+        state,
+        Tprime,
+        opts,
+        spec,
+        plot_title=f"Particle Omega-Tau Distribution @ step {step}",
+    )
     with Path(out_cfg["step_history_file"]).open("a", encoding="utf-8") as f:
-        f.write(f"{step},{dt_step:.16g},{elapsed_time:.16g},{out_cfg['interval_time']:.16g},{wall_clock_elapsed:.16g},{len(state.p)},{float(np.min(Tprime)):.16g},{float(np.mean(Tprime)):.16g},{float(np.max(Tprime)):.16g}\n")
+        f.write(
+            f"{step},"
+            f"{dt_step:.16g},"
+            f"{float(get_or(dt_info, 'dt_cfl', np.nan)):.16g},"
+            f"{float(get_or(dt_info, 'dt_prob', np.nan)):.16g},"
+            f"{elapsed_time:.16g},"
+            f"{out_cfg['interval_time']:.16g},"
+            f"{wall_clock_elapsed:.16g},"
+            f"{len(state.p)},"
+            f"{float(np.min(Tprime)):.16g},"
+            f"{float(np.mean(Tprime)):.16g},"
+            f"{float(np.max(Tprime)):.16g}\n"
+        )
 
 
 def normal_key(normal_name: str) -> str:
@@ -2100,6 +2953,8 @@ def normalize_action(mode_name: str) -> str:
     name = mode_name.lower()
     if name in {"pass", "open"}:
         return "pass"
+    if name == "scatter":
+        return "scatter"
     if name in {"reflect", "adiabatic"}:
         return "reflect"
     if name in {"catch", "absorb"}:
@@ -2111,12 +2966,29 @@ def normalize_action(mode_name: str) -> str:
     return "pass"
 
 
-def face_action(mesh: dict[str, Any], normal: str, pt: np.ndarray) -> str:
+def face_rule(mesh: dict[str, Any], normal: str, pt: np.ndarray) -> dict[str, Any] | None:
     rules = mesh.get("face_rules", {}).get("by_normal", {}).get(normal_key(normal), [])
     tol = 1e-12 * max(1.0, float(np.max(np.abs(pt))))
     for rule in rules:
         if point_hits_rule(pt, rule, tol):
-            return normalize_action(rule["mode"])
+            return rule
+    return None
+
+
+def face_action(mesh: dict[str, Any], normal: str, pt: np.ndarray) -> str:
+    rule = face_rule(mesh, normal, pt)
+    if rule is None:
+        return "pass"
+    return normalize_action(rule["mode"])
+
+
+def resolve_scatter_face_action(rule: dict[str, Any]) -> str:
+    probs = np.asarray(rule.get("scatter_probs", np.array([1.0, 0.0, 0.0], dtype=np.float64)), dtype=np.float64)
+    xi = float(np.random.random())
+    if xi < probs[0]:
+        return "scatter_diffuse"
+    if xi < probs[0] + probs[1]:
+        return "reflect"
     return "pass"
 
 
@@ -2132,15 +3004,32 @@ def point_hits_monitor(pt: np.ndarray, mon: dict[str, Any]) -> bool:
     return False
 
 
+MONITOR_ENERGY_BUCKETS = ("fwd_pos", "fwd_neg", "bwd_pos", "bwd_neg")
+
+
+def init_monitor_output_accumulators(nmon: int) -> dict[str, np.ndarray]:
+    acc: dict[str, np.ndarray] = {}
+    for prefix in ("cum", "interval"):
+        acc[f"{prefix}_energy_net"] = np.zeros(nmon, dtype=np.float64)
+        acc[f"{prefix}_crossings_pos"] = np.zeros(nmon, dtype=np.float64)
+        acc[f"{prefix}_crossings_neg"] = np.zeros(nmon, dtype=np.float64)
+        for bucket in MONITOR_ENERGY_BUCKETS:
+            acc[f"{prefix}_energy_{bucket}"] = np.zeros(nmon, dtype=np.float64)
+            acc[f"{prefix}_crossings_{bucket}"] = np.zeros(nmon, dtype=np.float64)
+    return acc
+
+
 def empty_heat_flux_stats(mesh: dict[str, Any]) -> dict[str, np.ndarray]:
     nmon = len(mesh.get("heat_flux_monitors", []))
-    return {
+    stats = {
         "net_energy": np.zeros(nmon, dtype=np.float64),
-        "forward_energy": np.zeros(nmon, dtype=np.float64),
-        "backward_energy": np.zeros(nmon, dtype=np.float64),
         "crossings_pos": np.zeros(nmon, dtype=np.float64),
         "crossings_neg": np.zeros(nmon, dtype=np.float64),
     }
+    for bucket in MONITOR_ENERGY_BUCKETS:
+        stats[f"energy_{bucket}"] = np.zeros(nmon, dtype=np.float64)
+        stats[f"crossings_{bucket}"] = np.zeros(nmon, dtype=np.float64)
+    return stats
 
 
 def merge_heat_flux_stats(stats: dict[str, np.ndarray], add_stats: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -2164,12 +3053,16 @@ def tally_heat_flux_crossing(stats: dict[str, np.ndarray], mesh: dict[str, Any],
         if sign == 0.0:
             continue
         stats["net_energy"][i] += sign * packet_E
+        packet_mag = abs(packet_E)
+        packet_is_positive = packet_E >= 0.0
         if sign > 0:
-            stats["forward_energy"][i] += packet_E
             stats["crossings_pos"][i] += 1
+            bucket = "fwd_pos" if packet_is_positive else "fwd_neg"
         else:
-            stats["backward_energy"][i] += packet_E
             stats["crossings_neg"][i] += 1
+            bucket = "bwd_pos" if packet_is_positive else "bwd_neg"
+        stats[f"energy_{bucket}"][i] += packet_mag
+        stats[f"crossings_{bucket}"][i] += 1
 
 
 def next_particle_id(p: ParticleBlock) -> int:
@@ -2288,8 +3181,7 @@ def emit_particles_from_Wbm_refsample(
     Wabs = np.abs(Wbm)
     if not np.any(Wabs > 0):
         return ParticleBlock.empty()
-    Wref = HBAR * np.maximum(spec["w_mid"], 0.0) * np.maximum(spec["DOS_w_b"], 0.0) * bose_occupation(spec["w_mid"], max(float(Tref), 1e-12)) * ensure_2d_dw(spec)
-    cdf_ref = np.cumsum(Wref.ravel(order="F"))
+    cdf_ref = np.cumsum(Wabs.ravel(order="F"))
     if cdf_ref[-1] <= 0:
         return ParticleBlock.empty()
     cdf_ref /= cdf_ref[-1]
@@ -2301,14 +3193,6 @@ def emit_particles_from_Wbm_refsample(
     lin = np.clip(lin, 0, B * Nw - 1)
     b = (lin % B + 1).astype(np.int32)
     m = (lin // B + 1).astype(np.int32)
-    nonzero = Wabs.ravel(order="F") > 0
-    for i in range(Nsp):
-        if nonzero[lin[i]]:
-            continue
-        nz = np.flatnonzero(nonzero)
-        lin[i] = nz[0]
-        b[i] = np.int32(lin[i] % B + 1)
-        m[i] = np.int32(lin[i] // B + 1)
     has_edges = "w_edges" in spec and len(spec["w_edges"]) == Nw + 1
     if has_edges:
         w_lo = np.asarray(spec["w_edges"], dtype=np.float64)[m - 1]
@@ -2360,21 +3244,22 @@ def spawn_heat_source(opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str
     V_region = float(Vc.sum())
     if V_region <= 0:
         return ParticleBlock.empty()
-    cid = locate_cell_from_point(mesh, ctr)
-    Tloc = float(Tprime[cid - 1]) if 1 <= cid <= Tprime.size else float(np.mean(Tprime))
-    dE_tot = float(src["qvol"]) * V_region * dt
-    Uloc = float(lut["U_interp"](np.clip(Tloc, lut["T"][0], lut["T"][-1])))
-    Tsrc = float(lut["inv_interp"](np.clip(Uloc + dE_tot / V_region, lut["U_mono"][0], lut["U_mono"][-1])))
-    Wbm = build_local_diff_spectrum(spec, Tsrc, Tloc)
-    if not np.any(Wbm != 0):
-        return ParticleBlock.empty()
     Tref_all = np.asarray(state.info.get("Tref_cell", np.zeros(0)), dtype=np.float64).reshape(-1)
     if Tref_all.size >= int(np.max(cells)):
         Tref_loc = float(np.mean(Tref_all[cells - 1]))
     elif np.isfinite(get_or(opts, "Tref", np.nan)):
         Tref_loc = float(opts["Tref"])
     else:
-        Tref_loc = Tloc
+        cid = locate_cell_from_point(mesh, ctr)
+        Tref_loc = float(Tprime[cid - 1]) if 1 <= cid <= Tprime.size else float(np.mean(Tprime))
+    dE_tot = float(src.get("dE_tot", float(src["qvol"]) * V_region * dt))
+    if abs(dE_tot) <= 0.0:
+        return ParticleBlock.empty()
+    Uref = float(lut["U_interp"](np.clip(Tref_loc, lut["T"][0], lut["T"][-1])))
+    Tsrc = float(lut["inv_interp"](np.clip(Uref + dE_tot / V_region, lut["U_mono"][0], lut["U_mono"][-1])))
+    Wbm = build_local_diff_spectrum(spec, Tsrc, Tref_loc)
+    if not np.any(Wbm != 0):
+        return ParticleBlock.empty()
     return emit_particles_from_Wbm_refsample(mesh, spec, cells, Vc, Wbm, dE_tot, E_eff, Tref_loc, next_particle_id(state.p), bool(src.get("force_positive", False)))
 
 
@@ -2398,6 +3283,8 @@ def _precompute_relax_times_numba(
     B_TU: float,
     tau_LTO_ps: float,
     A_imp: float,
+    B_imp: float,
+    C_imp: float,
     bulk_L: float,
     bulk_F: float,
     Tsi: float,
@@ -2407,6 +3294,13 @@ def _precompute_relax_times_numba(
     n2: float,
 ) -> np.ndarray:
     Np = w.size
+    # r_tau columns:
+    #   0 -> LA normal three-phonon rate
+    #   1 -> TA normal three-phonon rate
+    #   2 -> TA umklapp three-phonon rate
+    #   3 -> LO/TO fixed relaxation rate
+    #   4 -> impurity scattering rate: A_imp*w^4 + B_imp*w^2 + C_imp
+    #   5 -> boundary scattering rate
     out = np.zeros((Np, 6), dtype=np.float64)
     for i in prange(Np):
         bi = b[i] - 1
@@ -2423,7 +3317,7 @@ def _precompute_relax_times_numba(
                 out[i, 2] = B_TU * wi * wi / max(math.sinh(x), 1e-12)
         if branch_is_loto[bi]:
             out[i, 3] = 1.0 / (tau_LTO_ps * 1e-12)
-        out[i, 4] = A_imp * wi**4
+        out[i, 4] = A_imp * wi**4 + B_imp * wi**2 + C_imp
         if Tsi > 0.0:
             normv = math.sqrt(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
             if normv > 0.0:
@@ -2445,6 +3339,8 @@ def precompute_relax_times(state: SimulationState, Tcell: np.ndarray, opts: dict
     ensure_num_threads(int(get_or(parallel_cfg, "num_threads", os.cpu_count() or 1)))
     n_hat = np.asarray(get_or(opts, "transport_n", np.array([0.0, 0.0, 1.0])), dtype=np.float64).reshape(3)
     n_hat /= max(np.linalg.norm(n_hat), np.finfo(np.float64).eps)
+    # Return shape is (Np, 6), with the column order documented in
+    # _precompute_relax_times_numba() above.
     return _precompute_relax_times_numba(
         state.p.cell.astype(np.int64),
         state.p.b.astype(np.int64),
@@ -2464,6 +3360,8 @@ def precompute_relax_times(state: SimulationState, Tcell: np.ndarray, opts: dict
         float(get_or(opts, "BTU", 2.89e-18)),
         float(get_or(opts, "tau_LTO_ps", 3.5)),
         float(get_or(opts, "A_imp", 1.32e-45)),
+        float(get_or(opts, "B_imp", 0.0)),
+        float(get_or(opts, "C_imp", 0.0)),
         float(get_or(opts, "PB_bulk_L", 7.16e-3)),
         float(get_or(opts, "PB_bulk_F", 0.68)),
         float(get_or(opts, "PB_Tsi", 0.0)),
@@ -2489,8 +3387,9 @@ def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any
     dt_cfl = cfl_safe * hmin / vg_max
     r_stat = 0.0
     dt_prob = np.inf
+    r_tot = np.zeros(0, dtype=np.float64)
     if rates_mat is not None and rates_mat.size:
-        r_tot = np.sum(rates_mat, axis=1)
+        r_tot = active_total_scattering_rate_for_particles(opts, rates_mat)
         r_pos = r_tot[r_tot > 0]
         if r_pos.size:
             if mode == "avg":
@@ -2504,7 +3403,20 @@ def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any
     dt = min(max(dt_raw, dt_min), dt_max)
     if dt_fixed > 0.0:
         mode = "fixed"
-    return dt, {"dt_cfl": dt_cfl, "dt_prob": dt_prob, "dt_raw": dt_raw, "dt": dt, "vg_max": vg_max, "hmin": hmin, "p_target": p_target, "mode": mode, "r_stat": r_stat, "p_scat_max": float(np.max(1.0 - np.exp(-dt * np.sum(rates_mat, axis=1)))) if rates_mat is not None and rates_mat.size else np.nan}
+    p_hit = 1.0 - np.exp(-dt * np.maximum(r_tot, 0.0)) if r_tot.size else np.zeros(0, dtype=np.float64)
+    return dt, {
+        "dt_cfl": dt_cfl,
+        "dt_prob": dt_prob,
+        "dt_raw": dt_raw,
+        "dt": dt,
+        "vg_max": vg_max,
+        "hmin": hmin,
+        "p_target": p_target,
+        "mode": mode,
+        "r_stat": r_stat,
+        "p_scat_max": float(np.max(p_hit)) if p_hit.size else np.nan,
+        "hits_expected": float(np.sum(p_hit)) if p_hit.size else 0.0,
+    }
 
 
 def get_w_edges(spec: dict[str, Any]) -> np.ndarray:
@@ -2542,7 +3454,7 @@ def build_pp_rate_table_from_particles(b_vec: np.ndarray, w_vec: np.ndarray, rpp
     return Gamma
 
 
-def pp_rate_table_at_T(spec: dict[str, Any], T: float, opts: dict[str, Any], fallback_table: np.ndarray) -> np.ndarray:
+def scattering_rate_table_at_T(spec: dict[str, Any], T: float, opts: dict[str, Any], fallback_table: np.ndarray | None) -> np.ndarray:
     if callable(opts.get("pp_rate_table_fun")):
         Gamma = np.asarray(opts["pp_rate_table_fun"](T, spec), dtype=np.float64)
     elif callable(spec.get("pp_rate_table_fun")):
@@ -2559,16 +3471,29 @@ def pp_rate_table_at_T(spec: dict[str, Any], T: float, opts: dict[str, Any], fal
             a = (T - Tg[k]) / (Tg[k + 1] - Tg[k])
             Gamma = (1.0 - a) * G3[:, :, k] + a * G3[:, :, k + 1]
     else:
-        Gamma = fallback_table
+        Gamma = scattering_rate_table_formula(spec, T, opts)
     Gamma = np.maximum(np.nan_to_num(Gamma, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
-    if not np.any(Gamma > 0):
+    if not np.any(Gamma > 0) and fallback_table is not None:
         Gamma = np.maximum(fallback_table, 0.0)
-        if not np.any(Gamma > 0):
+    if not np.any(Gamma > 0):
+        if fallback_table is not None:
             Gamma = np.ones_like(fallback_table)
+        else:
+            Gamma = np.ones_like(np.asarray(spec["w_mid"], dtype=np.float64))
     return Gamma
 
 
-def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], dt: float, Tstar: np.ndarray, r_tau: np.ndarray) -> tuple[SimulationState, np.ndarray]:
+def particle_scattering(
+    state: SimulationState,
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    opts: dict[str, Any],
+    dt: float,
+    Tstar: np.ndarray,
+    r_tau: np.ndarray,
+    scatter_lut: dict[str, Any] | None = None,
+    Tscatt_cell: np.ndarray | None = None,
+) -> tuple[SimulationState, np.ndarray]:
     Nc = infer_Nc(mesh)
     if len(state.p) == 0:
         return state, np.zeros(Nc, dtype=np.float64)
@@ -2580,13 +3505,15 @@ def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict
     vy = state.p.vy.copy()
     vz = state.p.vz.copy()
     cell_id = state.p.cell.astype(np.int64)
+    # r_tau[:, i] follows the precomputed order:
+    # LA normal, TA normal, TA umklapp, LO/TO, impurity, boundary.
     rLA, rTAN, rTAU, rLTO, rPI, rPB = [np.maximum(r_tau[:, i], 0.0) for i in range(6)]
     if not pb_on:
         rPB[:] = 0.0
-    rPP = np.zeros(len(state.p), dtype=np.float64)
-    rPP[b == 1] = rLA[b == 1]
-    rPP[b == 2] = rTAN[b == 2] + rTAU[b == 2]
-    rPP[b > 2] = rLTO[b > 2]
+    # Event selection still uses PP / PI / PB channel splitting, but the
+    # scattering-sampling temperature and the resampling Gamma table use the
+    # active total scattering rate.
+    rPP = pp_only_rate_for_particles(b, r_tau, spec)
     rTOT = rPP + rPI + rPB
     hit = np.random.random(len(state.p)) < (1.0 - np.exp(-dt * np.maximum(rTOT, 0.0)))
     sel = np.random.random(np.count_nonzero(hit)) * rTOT[hit]
@@ -2608,9 +3535,11 @@ def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict
         iiPP = np.flatnonzero(isPP)
         cPP = cell_id[iiPP]
         Tref_cell = reference_temperature_from_state(state, opts, Nc)
+        if Tscatt_cell is None:
+            Tscatt_cell, _ = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, scatter_lut)
         B, Nw = spec["w_mid"].shape
         w_edges = get_w_edges(spec)
-        fallback = build_pp_rate_table_from_particles(b.astype(np.int64), w, rPP, w_edges, B, Nw)
+        fallback = build_pp_rate_table_from_particles(b.astype(np.int64), w, rTOT, w_edges, B, Nw)
         use_center = bool(get_or(opts, "use_bin_center_w", True))
         DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
         dw2 = ensure_2d_dw(spec)
@@ -2620,8 +3549,8 @@ def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict
         vabs_new = np.zeros(iiPP.size, dtype=np.float64)
         for cid in np.unique(cPP):
             loc = cPP == cid
-            Tcell_loc = float(max(Tstar[int(cid) - 1], 1e-12))
-            Gamma = pp_rate_table_at_T(spec, Tcell_loc, opts, fallback)
+            Tcell_loc = float(max(Tscatt_cell[int(cid) - 1], 1e-12))
+            Gamma = scattering_rate_table_at_T(spec, Tcell_loc, opts, fallback)
             if str(get_or(opts, "mode", "absolute")).lower() == "absolute":
                 W = HBAR * wmid * DOS * bose_occupation(wmid, Tcell_loc) * Gamma * dw2
             else:
@@ -2666,8 +3595,10 @@ def particle_scattering(state: SimulationState, mesh: dict[str, Any], spec: dict
         state.p.q = q_vabs_from_w_table(spec, state.p.w, state.p.b)[0]
     after_energy = np.bincount(state.p.cell.astype(np.int64) - 1, weights=state.p.E, minlength=Nc).astype(np.float64) if len(state.p) else np.zeros(Nc, dtype=np.float64)
     if bool(get_or(get_or(opts, "log", {}), "on", False)):
+        hits_expected = float(np.sum(1.0 - np.exp(-dt * np.maximum(rTOT, 0.0))))
         print(
             f"        [scatter] N={len(state.p)} | hits={int(np.count_nonzero(hit))} "
+            f"exp={hits_expected:.1f} "
             f"(PP={int(np.count_nonzero(isPP))}, PI={int(np.count_nonzero(isPI))}, PB={int(np.count_nonzero(isPB))}) "
             f"| E_total={float(state.p.E.sum()):.3e} J"
         )
@@ -2765,7 +3696,10 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
             else:
                 normal = "+Z" if vz[k] > 0 else "-Z"
             pt = np.array([x[k], y[k], z[k]], dtype=np.float64)
-            action = face_action(mesh, normal, pt)
+            matched_rule = face_rule(mesh, normal, pt)
+            action = "pass" if matched_rule is None else normalize_action(matched_rule["mode"])
+            if action == "scatter":
+                action = resolve_scatter_face_action(matched_rule)
             packet_E = float(pE[k]) if k < pE.size else 0.0
             if action == "pass":
                 tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
@@ -2822,6 +3756,17 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                     y[k] = Y[iy[k]] - epsl if normal == "+Y" else Y[iy[k] - 1] + epsl
                 else:
                     vz[k] = -vz[k]
+                    z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
+            elif action == "scatter_diffuse":
+                dirs = rand_hemisphere_vec(normal)
+                vx[k] = vabs[k] * dirs[0]
+                vy[k] = vabs[k] * dirs[1]
+                vz[k] = vabs[k] * dirs[2]
+                if normal in {"+X", "-X"}:
+                    x[k] = X[ix[k]] - epsl if normal == "+X" else X[ix[k] - 1] + epsl
+                elif normal in {"+Y", "-Y"}:
+                    y[k] = Y[iy[k]] - epsl if normal == "+Y" else Y[iy[k] - 1] + epsl
+                else:
                     z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
             elif action == "catch":
                 tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
@@ -2961,19 +3906,27 @@ def accumulate_output(output_cfg: dict[str, Any], fly_stats: dict[str, Any], dt:
     output_cfg["interval_time"] += dt
     h = fly_stats.get("heat_flux", {})
     if h:
-        output_cfg["cum_energy"] += h["net_energy"]
-        output_cfg["interval_energy"] += h["net_energy"]
+        output_cfg["cum_energy_net"] += h["net_energy"]
+        output_cfg["interval_energy_net"] += h["net_energy"]
         output_cfg["cum_crossings_pos"] += h["crossings_pos"]
         output_cfg["cum_crossings_neg"] += h["crossings_neg"]
         output_cfg["interval_crossings_pos"] += h["crossings_pos"]
         output_cfg["interval_crossings_neg"] += h["crossings_neg"]
+        for bucket in MONITOR_ENERGY_BUCKETS:
+            output_cfg[f"cum_energy_{bucket}"] += h[f"energy_{bucket}"]
+            output_cfg[f"interval_energy_{bucket}"] += h[f"energy_{bucket}"]
+            output_cfg[f"cum_crossings_{bucket}"] += h[f"crossings_{bucket}"]
+            output_cfg[f"interval_crossings_{bucket}"] += h[f"crossings_{bucket}"]
     return output_cfg
 
 
 def reset_output_interval(output_cfg: dict[str, Any]) -> dict[str, Any]:
-    output_cfg["interval_energy"][:] = 0.0
+    output_cfg["interval_energy_net"][:] = 0.0
     output_cfg["interval_crossings_pos"][:] = 0.0
     output_cfg["interval_crossings_neg"][:] = 0.0
+    for bucket in MONITOR_ENERGY_BUCKETS:
+        output_cfg[f"interval_energy_{bucket}"][:] = 0.0
+        output_cfg[f"interval_crossings_{bucket}"][:] = 0.0
     output_cfg["interval_time"] = 0.0
     return output_cfg
 
@@ -2981,18 +3934,35 @@ def reset_output_interval(output_cfg: dict[str, Any]) -> dict[str, Any]:
 def spawn_volume_sources_from_map(qvol: np.ndarray, opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str, Any], state: SimulationState, Tprime: np.ndarray, lut: dict[str, Any], dt: float) -> ParticleBlock:
     blocks: list[ParticleBlock] = []
     next_id = next_particle_id(state.p)
-    for cid, qsrc in enumerate(np.asarray(qvol, dtype=np.float64), start=1):
-        if qsrc == 0:
+    Vc = cell_volumes(mesh)
+    Nc = infer_Nc(mesh)
+    residual = np.asarray(state.info.get("volume_source_residual_J", np.zeros(Nc, dtype=np.float64)), dtype=np.float64).reshape(-1)
+    if residual.size != Nc:
+        residual = np.zeros(Nc, dtype=np.float64)
+    qsrc_arr = np.asarray(qvol, dtype=np.float64).reshape(-1)
+    for cid, qsrc in enumerate(qsrc_arr, start=1):
+        residual[cid - 1] += float(qsrc) * float(Vc[cid - 1]) * dt
+        dE_cell = float(residual[cid - 1])
+        if qsrc == 0 and abs(dE_cell) <= 0.0:
             continue
-        src = {"type": "volume", "qvol": float(qsrc), "E_eff": state.WE, "region": {"type": "cells", "id": [cid]}, "force_positive": True}
+        src = {
+            "type": "volume",
+            "qvol": float(qsrc),
+            "dE_tot": dE_cell,
+            "E_eff": state.WE,
+            "region": {"type": "cells", "id": [cid]},
+            "force_positive": True,
+        }
         temp_state = SimulationState(p=state.p, WE=state.WE, Wp=state.Wp, Nsp_cell=state.Nsp_cell, enhance_factor=state.enhance_factor, info=state.info)
         newp = spawn_heat_source(opts, mesh, spec, temp_state, Tprime, lut, src, dt)
         if len(newp):
+            residual[cid - 1] -= float(np.sum(newp.E))
             shift = next_id - (int(newp.id[0]) - 1)
             newp.id = newp.id + shift
             newp.par_id = newp.par_id + shift
             next_id = int(newp.id.max())
             blocks.append(newp)
+    state.info["volume_source_residual_J"] = residual
     if not blocks:
         return ParticleBlock.empty()
     out = blocks[0]
@@ -3081,9 +4051,22 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
         "step_history_file": "",
         "heat_flux_monitor_warnings": [],
         "reservoir_refresh_steps": [],
+        "initial_mfp_cdf_file": "",
+        "initial_scattering_rate_cdf_file": "",
     }
+    init_mfp_file = export_initial_mfp_cdf(output_cfg, state, Tstar, opts, spec)
+    if init_mfp_file:
+        out["initial_mfp_cdf_file"] = init_mfp_file
+        log(f"[init] initial MFP CDF exported to {init_mfp_file}\n")
+    init_rate_cdf_file = export_initial_scattering_rate_cdf(output_cfg, state, Tstar, opts, spec)
+    if init_rate_cdf_file:
+        out["initial_scattering_rate_cdf_file"] = init_rate_cdf_file
+        log(f"[init] initial total scattering rate CDF exported to {init_rate_cdf_file}\n")
     LUT = build_E_T_lookup(spec, et_lookup_cfg_from_opts(opts))
+    PP_SCAT_LUT = build_pp_scattering_T_lookup(spec, opts, tloc_lookup_cfg_from_opts(opts))
     Vc = cell_volumes(mesh)
+    Toc_step = Tstar.copy()
+    last_dt_info: dict[str, Any] = {}
     if reservoir_on and mesh.get("reservoirs") and refresh_at_step1:
         state, res_info = refresh_reservoir_particles(state, mesh, spec, opts)
         if res_info["refreshed"]:
@@ -3095,7 +4078,12 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
     U_cells_prev = float(np.sum(np.asarray(LUT["U_interp"](np.clip(Tstar, LUT["T"][0], LUT["T"][-1])), dtype=np.float64) * Vc))
     log(f"[{time.strftime('%H:%M:%S')}] MC BTE start. Ncells={Nc}, T0={T0:.2f} K, Tinit=[{Tstar.min():.2f}, {Tstar.mean():.2f}, {Tstar.max():.2f}] K\n")
     if qsrc_meta["used_file"]:
-        log(f"[source] loaded volume heat source from {qsrc_meta['source']} | q[min,mean,max]=[{qsrc_meta['q_min']:+.3e}, {qsrc_meta['q_mean']:+.3e}, {qsrc_meta['q_max']:+.3e}]\n")
+        log(
+            f"[source] loaded volume heat source from {qsrc_meta['source']} | "
+            f"format={qsrc_meta['format']} entries={qsrc_meta['n_entries']} nonzero_cells={qsrc_meta['n_nonzero_cells']} "
+            f"| q[min,mean,max]=[{qsrc_meta['q_min']:+.3e}, {qsrc_meta['q_mean']:+.3e}, {qsrc_meta['q_max']:+.3e}] "
+            f"| Ptot={qsrc_meta['q_total_W']:+.3e} W\n"
+        )
     hdr = "  step |      dt[s]   |  dT_inf[K] |  dT_L2[K] |    E_net[J] |   T_min[K] |  T_mean[K] |   T_max[K] |  pscat_max |      Np\n"
     fmt = "{step:6d} | {dt:1.4e} | {T_inf:1.4e} | {T_l2:1.4e} | {E_net:+.3e} | {Tmin:9.3f} | {Tmean:10.3f} | {Tmax:9.3f} | {pscat:10.3f} | {Np:7d}\n"
     for step in range(1, max_steps + 1):
@@ -3108,6 +4096,7 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
                 log(f"[reservoir] step={step} refreshed {res_info['cell_ids'].size} cells | removed={res_info['removed_particles']} added={res_info['added_particles']}\n")
         r_tau = precompute_relax_times(state, Tstar, opts, spec) if scatter_on else np.zeros((len(state.p), 6), dtype=np.float64)
         dt, info_dt = step_pick_dt(mesh, spec, opts, state, r_tau)
+        last_dt_info = dict(info_dt)
         dt = min(max(dt, dt_min), dt_max)
         out["dt_hist"].append(dt)
         if use_volume_map:
@@ -3118,7 +4107,12 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
         output_cfg = accumulate_output(output_cfg, fly_stats, dt)
         if scatter_on and len(state.p):
             r_tau = precompute_relax_times(state, Tstar, opts, spec)
-            state, _ = particle_scattering(state, mesh, spec, opts, dt, Tstar, r_tau)
+            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, PP_SCAT_LUT)[0]
+            state, _ = particle_scattering(state, mesh, spec, opts, dt, Tstar, r_tau, PP_SCAT_LUT, Toc_step)
+        elif scatter_on:
+            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, PP_SCAT_LUT)[0]
+        else:
+            Toc_step = Tstar.copy()
         Tprime, _ = update_temperature_from_energy(state, mesh, spec, opts, LUT)
         E_net_total = 0.0
         U_alive_now = particles_total_energy(state, opts)
@@ -3143,9 +4137,13 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
             log(hdr)
             log(fmt.format(step=step, dt=dt, T_inf=T_inf, T_l2=T_l2, E_net=E_net_total, Tmin=float(Tprime.min()), Tmean=float(Tprime.mean()), Tmax=float(Tprime.max()), pscat=0.0 if not np.isfinite(pscat_max) else pscat_max, Np=len(state.p)))
             log(f"   [ledger] dUc={dU_cells:+.3e}  dUa={dU_alive:+.3e}  resid={resid:+.3e}  (J)\n")
-            log(f"   [dt] dt_cfl={float(info_dt.get('dt_cfl', np.nan)):1.3e}  dt_prob={float(info_dt.get('dt_prob', np.nan)):1.3e}\n")
+            log(
+                f"   [dt] dt={float(info_dt.get('dt', dt)):1.3e}  "
+                f"dt_cfl={float(info_dt.get('dt_cfl', np.nan)):1.3e}  "
+                f"dt_scat={float(info_dt.get('dt_prob', np.nan)):1.3e}\n"
+            )
         if output_cfg["enabled"] and (step % output_cfg["every_n_steps"] == 0):
-            write_periodic_output(output_cfg, mesh, spec, state, Tprime, step, output_cfg["cum_time"], dt)
+            write_periodic_output(output_cfg, mesh, spec, state, Tprime, Toc_step, opts, info_dt, step, output_cfg["cum_time"], dt)
             output_cfg = reset_output_interval(output_cfg)
         Tstar = (1.0 - alpha_T) * Tstar + alpha_T * Tprime if alpha_T < 1.0 else Tprime.copy()
         U_alive_prev = U_alive_now
@@ -3159,7 +4157,7 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
             break
     if output_cfg["enabled"]:
         if output_cfg["interval_time"] > 0 and out["nsteps"] > 0:
-            write_periodic_output(output_cfg, mesh, spec, state, Tprime, out["nsteps"], output_cfg["cum_time"], out["dt_hist"][-1])
+            write_periodic_output(output_cfg, mesh, spec, state, Tprime, Toc_step, opts, last_dt_info, out["nsteps"], output_cfg["cum_time"], out["dt_hist"][-1])
         out["output_dir"] = output_cfg["run_dir"]
         out["output_steps_dir"] = output_cfg["steps_dir"]
         out["step_history_file"] = output_cfg["step_history_file"]
@@ -3180,7 +4178,10 @@ def MC_solve_BTE(cs: dict[str, Any], mat: dict[str, Any], opts: dict[str, Any] |
     spec = build_spectral_grid(mat, opts)
     print(f"[init] T0={float(opts['T0']):.2f} K | building initial particles")
     state = init_state_energy(mesh, spec, opts)
-    print(f"[init] particles={len(state.p)} | mode={state.info.get('mode', 'unknown')}")
+    print(
+        f"[init] particles={len(state.p)} | mode={state.info.get('mode', 'unknown')} "
+        f"| Eeff={float(state.WE):.3e} J"
+    )
     return MC_time_loop_BTE(mesh, spec, opts, state)
 
 
@@ -3226,6 +4227,7 @@ __all__ = [
     "MC_solve_BTE",
     "MC_time_loop_BTE",
     "build_E_T_lookup",
+    "build_pp_scattering_T_lookup",
     "build_q_T_lookup",
     "build_spectral_grid",
     "init_mesh_from_geom",
@@ -3251,5 +4253,6 @@ __all__ = [
     "setup_case_from_ldg_lgrid",
     "spawn_heat_source",
     "step_pick_dt",
+    "update_pp_scattering_temperature_from_energy",
     "update_temperature_from_energy",
 ]

@@ -1,0 +1,8 @@
+# x0 x1 y0 y1 z0 z1 direction label
+0 0.12 0.001 0.001 0 0.3 +Y flux_plane_001
+0 0.12 0.10 0.10 0 0.3 +Y flux_plane_002
+0 0.12 0.20 0.20 0 0.3 +Y flux_plane_003
+0 0.12 0.30 0.30 0 0.3 +Y flux_plane_004
+0 0.12 0.40 0.40 0 0.3 +Y flux_plane_005
+0 0.12 0.50 0.50 0 0.3 +Y flux_plane_006
+0 0.12 0.579 0.579 0 0.3 +Y flux_plane_007

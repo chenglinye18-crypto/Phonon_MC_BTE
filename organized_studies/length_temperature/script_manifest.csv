@@ -1,0 +1,5 @@
+name,category,status,target,note
+run_sweep.sh,shell_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/run_length_temperature_sweep.sh,batch runner
+plot_boxplot.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/plot_kappa_boxplot_vs_length_temp.py,length-temperature boxplot
+export_heat_flux.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/export_heat_flux.py,heat-flux extractor
+export_temperature_field.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/export_temperature_field.py,temperature-field extractor

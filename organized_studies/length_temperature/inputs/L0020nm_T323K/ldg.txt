@@ -1,0 +1,47 @@
+$Lx$ 0.12
+
+$Ly$ 0.04
+
+$Lz$ 0.3
+
+region 0 $Lx$ 0 $Ly$ 0 $Lz$ IGZO
+
+planerule 0 0 0.01 $Ly$-0.01 0 $Lz$ -X REFLECT
+
+planerule 0 0 0 0.01 0 $Lz$ -X REFLECT
+
+planerule 0 0 $Ly$-0.01 $Ly$ 0 $Lz$ -X REFLECT
+
+planerule $Lx$ $Lx$ 0.01 $Ly$-0.01 0 $Lz$ +X REFLECT
+
+planerule $Lx$ $Lx$ 0 0.01 0 $Lz$ +X REFLECT
+
+planerule $Lx$ $Lx$ $Ly$-0.01 $Ly$ 0 $Lz$ +X REFLECT
+
+planerule 0 $Lx$ 0 0 0 $Lz$ -Y REFLECT
+
+planerule 0 $Lx$ $Ly$ $Ly$ 0 $Lz$ +Y REFLECT
+
+planerule 0 $Lx$ 0.01 $Ly$-0.01 $Lz$ $Lz$ +Z REFLECT
+
+planerule 0 $Lx$ 0 0.01 $Lz$ $Lz$ +Z REFLECT
+
+planerule 0 $Lx$ $Ly$-0.01 $Ly$ $Lz$ $Lz$ +Z REFLECT
+
+lanerule 0 $Lx$ 0.01 $Ly$-0.01 0 0 -Z REFLECT
+
+planerule 0 $Lx$ 0 0.01 0 0 -Z REFLECT
+
+planerule 0 $Lx$ $Ly$-0.01 $Ly$ 0 0 -Z REFLECT
+
+planerule 0 $Lx$ 0.01 0.01 0 $Lz$ -Y CATCH
+
+planerule 0 $Lx$ 0.01 0.01 0 $Lz$ +Y GENERATE
+
+planerule 0 $Lx$ $Ly$-0.01 $Ly$-0.01 0 $Lz$ -Y GENERATE
+
+planerule 0 $Lx$ $Ly$-0.01 $Ly$-0.01 0 $Lz$ +Y CATCH
+
+RESERVOIR 0 $Lx$ 0 0.01 0 $Lz$
+
+RESERVOIR 0 $Lx$ $Ly$-0.01 $Ly$ 0 $Lz$
