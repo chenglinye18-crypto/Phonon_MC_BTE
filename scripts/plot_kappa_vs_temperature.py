@@ -152,8 +152,12 @@ def plot_curve(material_name: str, curve_df: pd.DataFrame, target_df: pd.DataFra
 
     x = curve_df["temperature_K"].to_numpy(dtype=np.float64)
     y = curve_df["thermal_conductivity_W_mK"].to_numpy(dtype=np.float64)
+    y_valid = y[np.isfinite(y) & (y > 0.0)]
+    if y_valid.size == 0:
+        raise ValueError("thermal conductivity curve must contain positive values for log-scale plotting")
+    y_floor = float(np.min(y_valid)) / 1.25
     ax.plot(x, y, color=model_color, linewidth=2.8, solid_capstyle="round", label="Current parameter set")
-    ax.fill_between(x, y, np.full_like(y, np.nanmin(y)), color=band_color, alpha=0.12)
+    ax.fill_between(x, y, np.full_like(y, y_floor), color=band_color, alpha=0.12)
 
     if not target_df.empty:
         tx = target_df["temperature_K"].to_numpy(dtype=np.float64)
@@ -169,14 +173,12 @@ def plot_curve(material_name: str, curve_df: pd.DataFrame, target_df: pd.DataFra
             zorder=4,
             label="Literature points",
         )
-        y_span = max(np.nanmax(np.r_[y, ty]) - np.nanmin(np.r_[y, ty]), 1e-6)
         for idx, (xt, yt) in enumerate(zip(tx, ty, strict=True)):
-            dy = 0.05 * y_span if idx % 2 == 0 else -0.08 * y_span
             ax.annotate(
                 f"{xt:.0f} K, {yt:.2f}",
                 xy=(xt, yt),
-                xytext=(xt + 3.0, yt + dy),
-                textcoords="data",
+                xytext=(8, 8 if idx % 2 == 0 else -14),
+                textcoords="offset points",
                 fontsize=9.5,
                 color=target_color,
                 arrowprops={"arrowstyle": "-", "color": target_color, "lw": 0.8, "alpha": 0.85},
@@ -184,10 +186,13 @@ def plot_curve(material_name: str, curve_df: pd.DataFrame, target_df: pd.DataFra
 
     ax.set_xlim(float(np.nanmin(x)), float(np.nanmax(x)))
     y_all = np.r_[y, target_df["thermal_conductivity_W_mK"].to_numpy(dtype=np.float64)] if not target_df.empty else y
-    y_min = float(np.nanmin(y_all))
-    y_max = float(np.nanmax(y_all))
-    pad = max(0.08 * (y_max - y_min), 0.06)
-    ax.set_ylim(y_min - pad, y_max + pad)
+    y_pos = y_all[np.isfinite(y_all) & (y_all > 0.0)]
+    if y_pos.size == 0:
+        raise ValueError("thermal conductivity plot requires positive y values for log scale")
+    y_min = float(np.min(y_pos))
+    y_max = float(np.max(y_pos))
+    ax.set_yscale("log")
+    ax.set_ylim(y_min / 1.25, y_max * 1.25)
     ax.set_xlabel("Temperature (K)")
     ax.set_ylabel(r"Thermal Conductivity, $\kappa$ (W m$^{-1}$ K$^{-1}$)")
     ax.set_title(f"{material_name} Thermal Conductivity vs Temperature")

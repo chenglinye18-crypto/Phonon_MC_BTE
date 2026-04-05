@@ -1,0 +1,20 @@
+name,category,status,target,note
+run_T300K_pm2p5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_300K_pm2p5K_rerun,"temperature=300K,delta_half=2.5K"
+run_T300K_pm5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_run_input_y280nm_10nm_Eeff5e-19_T300K,"temperature=300K,delta_half=5.0K"
+run_T300K_pm10K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_300K_pm10K,"temperature=300K,delta_half=10.0K"
+run_T300K_pm20K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_300K_pm20K,"temperature=300K,delta_half=20.0K"
+run_T300K_pm50K,run_result,missing,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_300K_pm50K,"temperature=300K,delta_half=50.0K"
+run_T323K_pm2p5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_323K_pm2p5K,"temperature=323K,delta_half=2.5K"
+run_T323K_pm5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_run_input_y280nm_10nm_Eeff5e-19_T323K,"temperature=323K,delta_half=5.0K"
+run_T323K_pm10K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_323K_pm10K,"temperature=323K,delta_half=10.0K"
+run_T323K_pm20K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_323K_pm20K,"temperature=323K,delta_half=20.0K"
+run_T323K_pm50K,run_result,missing,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_323K_pm50K,"temperature=323K,delta_half=50.0K"
+run_T373K_pm2p5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_373K_pm2p5K,"temperature=373K,delta_half=2.5K"
+run_T373K_pm5K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_run_input_y280nm_10nm_Eeff5e-19_T373K,"temperature=373K,delta_half=5.0K"
+run_T373K_pm10K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_373K_pm10K,"temperature=373K,delta_half=10.0K"
+run_T373K_pm20K,run_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_373K_pm20K,"temperature=373K,delta_half=20.0K"
+run_T373K_pm50K,run_result,missing,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/run_y280nm_373K_pm50K,"temperature=373K,delta_half=50.0K"
+kappa_vs_gradient,summary_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/y280_center_plane_kappa_vs_gradient,derived summary directory
+kappa_boxplot_gradient,summary_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/y280_center_plane_kappa_boxplot_gradient_interval_tail5,derived summary directory
+summary_300_373,summary_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/y280nm_300_373_gradient_summary,derived summary directory
+summary_matrix,summary_result,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/output/y280nm_gradient_matrix_summary,derived summary directory

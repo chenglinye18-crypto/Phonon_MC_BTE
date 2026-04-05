@@ -38,7 +38,8 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Export branch-wise scattering-rate vs energy plots from the current input case. "
             "The supplied temperature is used both as T0 for the spectral grid and as the "
-            "scattering-rate evaluation temperature."
+            "scattering-rate evaluation temperature. If multiple temperatures are supplied, "
+            "the script also exports a multi-temperature total-scattering-rate vs energy plot."
         )
     )
     parser.add_argument(
@@ -51,8 +52,12 @@ def parse_args() -> argparse.Namespace:
         "--T0",
         dest="temperature",
         type=float,
+        nargs="+",
         required=True,
-        help="Temperature in K used for both spectral-grid construction and scattering-rate evaluation.",
+        help=(
+            "One or more temperatures in K used for both spectral-grid construction and "
+            "scattering-rate evaluation."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -81,6 +86,22 @@ def parse_args() -> argparse.Namespace:
 def sanitize_name(name: str) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z._-]+", "_", str(name).strip())
     return cleaned.strip("_") or "material"
+
+
+def branch_display_names(spec: dict[str, object]) -> list[str]:
+    raw = [str(name) for name in spec["branches"]]
+    ta_count = 0
+    named: list[str] = []
+    for name in raw:
+        key = name.upper().replace(" ", "")
+        if "TA" in key:
+            ta_count += 1
+            named.append(f"TA{ta_count}")
+        elif "LA" in key:
+            named.append("LA")
+        else:
+            named.append(name)
+    return named
 
 
 def resolve_case_files(input_dir: Path) -> tuple[Path, Path]:
@@ -131,7 +152,7 @@ def branch_rates(spec: dict[str, object], opts: dict[str, object], temperature: 
         q[ib], vabs[ib] = q_vabs_from_w_table(spec, w[ib], b)
     T = max(float(temperature), 1e-6)
     x = HBAR * w / (K_B * T)
-    sinh_x = np.sinh(np.minimum(x, 700.0))
+    sinh_x = np.sinh(np.minimum(x, 10000.0))
     zeros = np.zeros_like(w)
 
     rate_la = zeros.copy()
@@ -153,7 +174,10 @@ def branch_rates(spec: dict[str, object], opts: dict[str, object], temperature: 
         rate_tau[umask] = float(opts["BTU"]) * w[umask] ** 2 / np.maximum(sinh_x[umask], 1e-12)
     if np.any(loto_mask):
         rate_loto = np.where(loto_mask, 1.0 / (float(opts["tau_LTO_ps"]) * 1e-12), 0.0)
-    rate_imp = float(opts["A_imp"]) * w**4
+    # Script-side impurity model only: tau_PI^-1 = A*omega^4 + B*omega^2 + C.
+    rate_imp = float(opts.get("A_imp", 0.0)) * w**4
+    rate_imp = rate_imp + float(opts.get("B_imp", 0.0)) * w**2
+    rate_imp = rate_imp + float(opts.get("C_imp", 0.0))
 
     Tsi = float(opts["PB_Tsi"])
     if Tsi > 0.0:
@@ -186,15 +210,58 @@ def branch_rates(spec: dict[str, object], opts: dict[str, object], temperature: 
 
 
 def rates_to_table(material_entry: dict[str, object], spec: dict[str, object], rates: dict[str, np.ndarray], temperature: float, cos_beta: float) -> pd.DataFrame:
-    branches = np.asarray(list(spec["branches"]), dtype=object)
+    branches = np.asarray(branch_display_names(spec), dtype=object)
     n_branch, n_bin = rates["rate_total_s_inv"].shape
     return pd.DataFrame(
         {
             "material": np.repeat(str(material_entry["name"]), n_branch * n_bin),
             "branch": np.repeat(branches, n_bin),
+            "temperature_K": np.full(n_branch * n_bin, float(temperature)),
+            "energy_eV": np.asarray(rates["energy_eV"], dtype=np.float64).reshape(-1),
             "scattering_rate_s_inv": np.asarray(rates["rate_total_s_inv"], dtype=np.float64).reshape(-1),
         }
     )
+
+
+def collapsed_total_rates_table(
+    material_entry: dict[str, object],
+    spec: dict[str, object],
+    rates: dict[str, np.ndarray],
+    temperature: float,
+) -> pd.DataFrame:
+    branches = branch_display_names(spec)
+    energy = np.asarray(rates["energy_eV"], dtype=np.float64)
+    total = np.asarray(rates["rate_total_s_inv"], dtype=np.float64)
+    rows: list[pd.DataFrame] = []
+    ta_idx = [i for i, name in enumerate(branches) if name.startswith("TA")]
+    if ta_idx:
+        rows.append(
+            pd.DataFrame(
+                {
+                    "material": str(material_entry["name"]),
+                    "branch": "TA",
+                    "temperature_K": float(temperature),
+                    "energy_eV": energy[ta_idx[0]],
+                    "scattering_rate_s_inv": np.mean(total[ta_idx], axis=0),
+                }
+            )
+        )
+    for i, name in enumerate(branches):
+        if name == "LA":
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "material": str(material_entry["name"]),
+                        "branch": "LA",
+                        "temperature_K": float(temperature),
+                        "energy_eV": energy[i],
+                        "scattering_rate_s_inv": total[i],
+                    }
+                )
+            )
+    if not rows:
+        return pd.DataFrame(columns=["material", "branch", "temperature_K", "energy_eV", "scattering_rate_s_inv"])
+    return pd.concat(rows, ignore_index=True)
 
 
 def compute_thermal_conductivity(material_entry: dict[str, object], spec: dict[str, object], rates: dict[str, np.ndarray], temperature: float) -> pd.DataFrame:
@@ -206,7 +273,7 @@ def compute_thermal_conductivity(material_entry: dict[str, object], spec: dict[s
         dw = dw.reshape(1, -1)
     T = max(float(temperature), 1e-12)
     x = HBAR * w / (K_B * T)
-    ex = np.exp(np.minimum(x, 700.0))
+    ex = np.exp(np.minimum(x, 10000.0))
     nbe = 1.0 / np.maximum(ex - 1.0, np.finfo(np.float64).tiny)
     dndT = (HBAR * w / (K_B * T * T)) * nbe * (nbe + 1.0)
     cv_mode = HBAR * w * dndT
@@ -240,8 +307,13 @@ def positive_or_nan(values: np.ndarray) -> np.ndarray:
     return np.where(arr > 0.0, arr, np.nan)
 
 
+def temperature_tag(temperatures: list[float]) -> str:
+    parts = [f"{float(temp):.3f}K" for temp in temperatures]
+    return "_".join(parts)
+
+
 def plot_material_rates(material_entry: dict[str, object], spec: dict[str, object], rates: dict[str, np.ndarray], temperature: float, cos_beta: float, output_png: Path, dpi: int) -> None:
-    branches = list(spec["branches"])
+    branches = branch_display_names(spec)
     n_branch = len(branches)
     ncols = 2 if n_branch > 1 else 1
     nrows = int(math.ceil(n_branch / ncols))
@@ -285,45 +357,173 @@ def plot_material_rates(material_entry: dict[str, object], spec: dict[str, objec
     plt.close(fig)
 
 
+def plot_material_total_rates_single_temperature(
+    material_entry: dict[str, object],
+    spec: dict[str, object],
+    rates: dict[str, np.ndarray],
+    temperature: float,
+    output_png: Path,
+    dpi: int,
+) -> None:
+    table = collapsed_total_rates_table(material_entry, spec, rates, temperature)
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    colors = {
+        "LA": "#0f766e",
+        "TA": "#1d4ed8",
+    }
+    for branch_name in ["TA", "LA"]:
+        df = table[table["branch"] == branch_name]
+        if df.empty:
+            continue
+        x = df["energy_eV"].to_numpy(dtype=np.float64)
+        y = df["scattering_rate_s_inv"].to_numpy(dtype=np.float64)
+        order = np.argsort(x, kind="stable")
+        ax.plot(
+            x[order],
+            positive_or_nan(y[order]),
+            linewidth=2.0,
+            color=colors.get(branch_name, None),
+            label=branch_name,
+        )
+    ax.set_yscale("log")
+    ax.set_xlabel("E (eV)")
+    ax.set_ylabel("Total Scattering Rate (s$^{-1}$)")
+    ax.set_title(f"{material_entry['name']} | T = {temperature:.3f} K")
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_material_total_rates_multi_temperature(
+    material_entry: dict[str, object],
+    curves: list[tuple[float, dict[str, object], dict[str, np.ndarray]]],
+    output_png: Path,
+    dpi: int,
+) -> None:
+    if not curves:
+        return
+    branches = ["TA", "LA"]
+    n_branch = len(branches)
+    ncols = 2 if n_branch > 1 else 1
+    nrows = int(math.ceil(n_branch / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.0 * ncols, 4.4 * nrows), squeeze=False)
+    cmap = plt.get_cmap("viridis")
+    colors = [cmap(i) for i in np.linspace(0.10, 0.90, len(curves))]
+    for ib, branch_name in enumerate(branches):
+        ax = axes[ib // ncols][ib % ncols]
+        for color, (temperature, _spec, rates) in zip(colors, curves):
+            table = collapsed_total_rates_table(material_entry, _spec, rates, temperature)
+            df = table[table["branch"] == branch_name]
+            if df.empty:
+                continue
+            x = df["energy_eV"].to_numpy(dtype=np.float64)
+            y = df["scattering_rate_s_inv"].to_numpy(dtype=np.float64)
+            order = np.argsort(x, kind="stable")
+            ax.plot(
+                x[order],
+                positive_or_nan(y[order]),
+                color=color,
+                linewidth=1.8,
+                label=f"{float(temperature):.3f} K",
+            )
+        ax.set_yscale("log")
+        ax.set_xlabel("E (eV)")
+        ax.set_ylabel("Total Scattering Rate (s$^{-1}$)")
+        ax.set_title(str(branch_name))
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
+        ax.legend(fontsize=8, frameon=False)
+    for idx in range(n_branch, nrows * ncols):
+        axes[idx // ncols][idx % ncols].axis("off")
+    temp_desc = ", ".join(f"{float(temp):.3f} K" for temp, _, _ in curves)
+    fig.suptitle(
+        f"{material_entry['name']} | Total Scattering Rate vs E | T = {temp_desc}",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> int:
     args = parse_args()
     input_dir = resolve_input_dir(args.input_dir if args.input_dir else None)
     if not input_dir.is_dir():
         raise FileNotFoundError(f"input directory not found: {input_dir}")
     output_dir = resolve_output_dir(args.output_dir)
-    temperature = float(args.temperature)
+    temperatures = [float(temp) for temp in args.temperature]
     material_entries = resolve_material_entries(input_dir, list(args.material))
-    opts = build_opts(input_dir, temperature)
-    kappa_csv_path = output_dir / f"thermal_conductivity_T{temperature:.3f}K.csv"
 
     manifest_rows = []
-    kappa_tables: list[pd.DataFrame] = []
+    multi_temp_manifest_rows = []
+    for temperature in temperatures:
+        kappa_csv_path = output_dir / f"thermal_conductivity_T{temperature:.3f}K.csv"
+        if kappa_csv_path.exists():
+            kappa_csv_path.unlink()
     for entry in material_entries:
-        mat = dict(entry["mat"])
-        spec = build_spectral_grid(mat, opts)
-        rates = branch_rates(spec, opts, temperature, args.cos_beta)
         safe_name = sanitize_name(f"{entry['key']}_{entry['name']}")
-        csv_path = output_dir / f"scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.csv"
-        png_path = output_dir / f"scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.png"
-        table = rates_to_table(entry, spec, rates, temperature, args.cos_beta)
-        table.to_csv(csv_path, index=False)
-        kappa_tables.append(compute_thermal_conductivity(entry, spec, rates, temperature))
-        plot_material_rates(entry, spec, rates, temperature, args.cos_beta, png_path, int(args.dpi))
-        manifest_rows.append(
-            {
-                "material_key": entry["key"],
-                "material_name": entry["name"],
-                "temperature_K": temperature,
-                "cos_beta": float(args.cos_beta),
-                "csv_path": str(csv_path.resolve()),
-                "png_path": str(png_path.resolve()),
-                "thermal_conductivity_csv_path": str(kappa_csv_path.resolve()),
-            }
+        multi_temp_curves: list[tuple[float, dict[str, object], dict[str, np.ndarray]]] = []
+        for temperature in temperatures:
+            opts = build_opts(input_dir, temperature)
+            mat = dict(entry["mat"])
+            spec = build_spectral_grid(mat, opts)
+            rates = branch_rates(spec, opts, temperature, args.cos_beta)
+            csv_path = output_dir / f"scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.csv"
+            png_path = output_dir / f"scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.png"
+            total_csv_path = output_dir / f"total_scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.csv"
+            total_png_path = output_dir / f"total_scattering_rate_vs_E_{safe_name}_T{temperature:.3f}K.png"
+            kappa_csv_path = output_dir / f"thermal_conductivity_T{temperature:.3f}K.csv"
+            table = rates_to_table(entry, spec, rates, temperature, args.cos_beta)
+            table.to_csv(csv_path, index=False)
+            collapsed_total_rates_table(entry, spec, rates, temperature).to_csv(total_csv_path, index=False)
+            compute_thermal_conductivity(entry, spec, rates, temperature).to_csv(
+                kappa_csv_path,
+                mode="a" if kappa_csv_path.exists() else "w",
+                header=not kappa_csv_path.exists(),
+                index=False,
+            )
+            plot_material_rates(entry, spec, rates, temperature, args.cos_beta, png_path, int(args.dpi))
+            plot_material_total_rates_single_temperature(entry, spec, rates, temperature, total_png_path, int(args.dpi))
+            manifest_rows.append(
+                {
+                    "material_key": entry["key"],
+                    "material_name": entry["name"],
+                    "temperature_K": temperature,
+                    "cos_beta": float(args.cos_beta),
+                    "csv_path": str(csv_path.resolve()),
+                    "png_path": str(png_path.resolve()),
+                    "total_csv_path": str(total_csv_path.resolve()),
+                    "total_png_path": str(total_png_path.resolve()),
+                    "thermal_conductivity_csv_path": str(kappa_csv_path.resolve()),
+                }
+            )
+            multi_temp_curves.append((temperature, spec, rates))
+            print(f"[ok] {entry['name']} | T={temperature:.3f} K -> {png_path}")
+        if len(multi_temp_curves) > 1:
+            multi_tag = temperature_tag(temperatures)
+            total_png_path = output_dir / f"total_scattering_rate_vs_E_{safe_name}_T{multi_tag}.png"
+            plot_material_total_rates_multi_temperature(entry, multi_temp_curves, total_png_path, int(args.dpi))
+            multi_temp_manifest_rows.append(
+                {
+                    "material_key": entry["key"],
+                    "material_name": entry["name"],
+                    "temperatures_K": ";".join(f"{temp:.3f}" for temp in temperatures),
+                    "png_path": str(total_png_path.resolve()),
+                }
+            )
+            print(f"[ok] {entry['name']} | multi-T total -> {total_png_path}")
+    for temperature in temperatures:
+        per_temp_rows = [row for row in manifest_rows if float(row["temperature_K"]) == float(temperature)]
+        pd.DataFrame(per_temp_rows).to_csv(output_dir / f"manifest_T{temperature:.3f}K.csv", index=False)
+    if multi_temp_manifest_rows:
+        multi_tag = temperature_tag(temperatures)
+        pd.DataFrame(multi_temp_manifest_rows).to_csv(
+            output_dir / f"manifest_total_scattering_rate_multiT_{multi_tag}.csv",
+            index=False,
         )
-        print(f"[ok] {entry['name']} -> {png_path}")
-    if kappa_tables:
-        pd.concat(kappa_tables, ignore_index=True).to_csv(kappa_csv_path, index=False)
-    pd.DataFrame(manifest_rows).to_csv(output_dir / f"manifest_T{temperature:.3f}K.csv", index=False)
     return 0
 
 

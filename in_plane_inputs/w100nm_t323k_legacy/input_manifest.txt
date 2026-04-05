@@ -1,0 +1,6 @@
+width_um,0.100000
+width_nm,100.000000
+width_label,0.10 um
+temperature_K,323.000000
+delta_T_K,10.000000
+transport_length_m,1.120000000000e-06

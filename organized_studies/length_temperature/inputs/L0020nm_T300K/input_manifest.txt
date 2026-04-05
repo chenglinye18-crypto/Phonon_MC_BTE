@@ -1,0 +1,8 @@
+length_nm=20
+grid_nm=1
+temperature_K=300
+total_length_nm=40
+monitor_positions_nm=10;15;20;25;30
+ny=22
+grid_note=nonuniform_y_with_10nm_reservoir_single_cell_and_1nm_center_cells
+y_edges_nm=0;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;40

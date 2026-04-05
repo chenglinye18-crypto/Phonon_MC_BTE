@@ -1,0 +1,7 @@
+name,category,status,target,note
+run_323K_sweep.sh,shell_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/run_y280nm_323K_gradient_sweep.sh,323K gradient runner
+run_300_373_no_pm50.sh,shell_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/run_y280nm_300_373_gradient_no_pm50.sh,300/373K runner
+run_overnight.sh,shell_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/run_y280nm_gradient_overnight.sh,overnight matrix runner
+plot_kappa_vs_gradient.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/plot_y280_center_plane_kappa_vs_gradient.py,gradient trend plot
+plot_kappa_boxplot_vs_gradient.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/plot_y280_center_plane_kappa_boxplot_vs_gradient.py,gradient boxplot
+export_heat_flux.py,python_script,linked,/home/ic/3dmc_Si_ylx_mod/Phonon_MC_py/scripts/export_heat_flux.py,heat-flux extractor

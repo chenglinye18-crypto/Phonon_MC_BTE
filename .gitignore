@@ -4,6 +4,10 @@ __pycache__/
 
 output/
 *.log
+.codex
+.codex/
+tmp_*/
+organized_studies/*/results/
 
 .pytest_cache/
 .mypy_cache/

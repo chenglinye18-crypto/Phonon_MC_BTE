@@ -1,0 +1,7 @@
+# x0 x1 y0 y1 z0 z1 direction label
+# snapped_to_grid_face_dx_nm=1
+0 0.12 0.01 0.01 0 0.3 +Y flux_plane_001
+0 0.12 0.028 0.028 0 0.3 +Y flux_plane_002
+0 0.12 0.045 0.045 0 0.3 +Y flux_plane_003
+0 0.12 0.063 0.063 0 0.3 +Y flux_plane_004
+0 0.12 0.08 0.08 0 0.3 +Y flux_plane_005
