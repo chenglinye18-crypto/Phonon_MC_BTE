@@ -1,9 +1,0 @@
-Lx_um=0.01
-Ly_active_um=0.225
-Ly_total_um=0.245
-Lz_um=0.07
-grid_dy_nm=5
-reservoir_each_nm=10
-monitor_positions_um=0.02;0.055;0.125;0.19;0.225
-heat_region_um=0,0.01,0.055,0.19,0,0.07
-heat_power_density_W_m3=1.15804e14

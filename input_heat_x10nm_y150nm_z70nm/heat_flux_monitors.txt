@@ -1,0 +1,10 @@
+# x0 x1 y0 y1 z0 z1 direction label
+# core cross-section with dy=2 nm grid
+0.01 0.01 0.01 0.055 0.01 0.08 -X Source
+0.01 0.01 0.055 0.115 0.01 0.08 -X Gate
+0.01 0.01 0.115 0.16 0.01 0.08 -X Drain
+0.02 0.02 0.01 0.16 0.01 0.08 +X Sub
+0.01 0.02 0.01 0.01 0.01 0.08 -Y Sidewall1
+0.01 0.02 0.16 0.16 0.01 0.08 +Y Sidewall2
+0.01 0.02 0.01 0.16 0.01 0.01 -Z Sidewall3
+0.01 0.02 0.01 0.16 0.08 0.08 +Z Sidewall4

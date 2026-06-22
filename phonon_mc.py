@@ -40,6 +40,7 @@ class ParticleBlock:
     id: np.ndarray
     par_id: np.ndarray
     cell: np.ndarray
+    material_id: np.ndarray  # 0-based index into the multi-material specs list; -1 = unassigned
     x: np.ndarray
     y: np.ndarray
     z: np.ndarray
@@ -63,6 +64,7 @@ class ParticleBlock:
             id=np.zeros(0, dtype=np.int64),
             par_id=np.zeros(0, dtype=np.int64),
             cell=np.zeros(0, dtype=np.int32),
+            material_id=np.zeros(0, dtype=np.int32),
             x=np.zeros(0, dtype=np.float64),
             y=np.zeros(0, dtype=np.float64),
             z=np.zeros(0, dtype=np.float64),
@@ -86,6 +88,7 @@ class ParticleBlock:
             id=self.id.copy(),
             par_id=self.par_id.copy(),
             cell=self.cell.copy(),
+            material_id=self.material_id.copy(),
             x=self.x.copy(),
             y=self.y.copy(),
             z=self.z.copy(),
@@ -125,6 +128,7 @@ class ParticleBlock:
             id=self._take_array(self.id, idx),
             par_id=self._take_array(self.par_id, idx),
             cell=self._take_array(self.cell, idx),
+            material_id=self._take_array(self.material_id, idx),
             x=self._take_array(self.x, idx),
             y=self._take_array(self.y, idx),
             z=self._take_array(self.z, idx),
@@ -152,6 +156,7 @@ class ParticleBlock:
             id=np.concatenate((self.id, other.id)),
             par_id=np.concatenate((self.par_id, other.par_id)),
             cell=np.concatenate((self.cell, other.cell)),
+            material_id=np.concatenate((self.material_id, other.material_id)),
             x=np.concatenate((self.x, other.x)),
             y=np.concatenate((self.y, other.y)),
             z=np.concatenate((self.z, other.z)),
@@ -249,10 +254,37 @@ def apply_solver_param_config(opts: dict[str, Any], config: dict[str, Any]) -> d
         if "refresh_at_step1" in reservoir_cfg and reservoir_cfg["refresh_at_step1"] is not None:
             res["refresh_at_step1"] = bool(reservoir_cfg["refresh_at_step1"])
         opts["reservoir"] = res
+    # -- material aliases ---------------------------------------------------
+    aliases = config.get("material_aliases", {})
+    if isinstance(aliases, dict):
+        for alias, canonical in aliases.items():
+            register_material_alias(str(alias), str(canonical))
+    # -- scattering parameters ----------------------------------------------
     scattering = dict(config.get("scattering", {}))
-    for key in ("BL", "BTN", "BTU", "tau_LTO_ps", "A_imp", "B_imp", "C_imp", "PB_Tsi", "PB_bulk_L", "PB_bulk_F", "PB_Delta", "transport_n"):
-        if key in scattering:
-            opts[key] = scattering[key]
+    _SCATTER_KEYS = ("BL", "BTN", "BTU", "tau_LTO_ps", "A_imp", "B_imp", "C_imp",
+                     "PB_Tsi", "PB_bulk_L", "PB_bulk_F", "PB_Delta", "transport_n")
+    if scattering:
+        # Detect format: if every value is a dict (i.e. has no scalar leaves),
+        # treat as per-material.  Otherwise treat as flat global scattering.
+        all_tables = all(isinstance(v, dict) for v in scattering.values())
+        if all_tables:
+            # Per-material format:  [scattering.SILICON]  etc.
+            per_mat: dict[str, dict[str, Any]] = {}
+            for mat_key, params in scattering.items():
+                per_mat[str(mat_key).strip().upper()] = {k: params[k] for k in _SCATTER_KEYS if k in params}
+            opts["material_scattering"] = per_mat
+            # Also set global scattering keys from the first material for backward compat.
+            if per_mat:
+                first = next(iter(per_mat.values()))
+                for key in _SCATTER_KEYS:
+                    if key in first:
+                        opts[key] = first[key]
+        else:
+            # Flat format (legacy): apply to all materials.
+            opts["material_scattering"] = {}  # empty = use global fallback
+            for key in _SCATTER_KEYS:
+                if key in scattering:
+                    opts[key] = scattering[key]
     return opts
 
 
@@ -1045,17 +1077,33 @@ def build_layout_behavior(mesh: dict[str, Any], layout: dict[str, Any]) -> None:
         mesh["boundary"]["by_face"][tag] = list(layout.get("boundary_patches", {}).get(tag, []))
 
 
+# Material name aliases — maps common variant names to canonical keys.
+# Populated at runtime from solver_params.toml [material_aliases] or kept
+# as a built-in baseline. Keys are upper-case.
+_MATERIAL_ALIASES: dict[str, str] = {
+    "SI": "SILICON",
+    "SI_100": "SILICON",
+    "SILICON_100": "SILICON",
+}
+
+
+def register_material_alias(alias: str, canonical: str) -> None:
+    """Register a material name alias (both are uppercased)."""
+    _MATERIAL_ALIASES[str(alias).strip().upper()] = str(canonical).strip().upper()
+
+
 def material_key(name: str) -> str:
+    """Canonicalize a material name to its uppercase key, resolving aliases."""
     key = str(name).strip().upper()
-    if key in {"SI", "SILICON", "SI_100", "SILICON_100"}:
-        return "SILICON"
-    if key == "IGZO":
-        return "IGZO"
-    return key
+    return _MATERIAL_ALIASES.get(key, key)
 
 
-def resolve_case_material(cs: dict[str, Any]) -> dict[str, Any]:
-    materials = resolve_case_materials(cs)
+def resolve_case_material(cs: dict[str, Any], input_dir: str | Path | None = None) -> dict[str, Any]:
+    """Resolve the *primary* material for a single-material simulation.
+
+    For multi-material simulations prefer ``resolve_case_materials()`` directly.
+    """
+    materials = resolve_case_materials(cs, input_dir=input_dir)
     primary = materials["list"][materials["primary_index"] - 1]["mat"].copy()
     primary["case_material"] = materials["primary_key"]
     primary["case_material_label"] = materials["primary_name"]
@@ -1063,20 +1111,34 @@ def resolve_case_material(cs: dict[str, Any]) -> dict[str, Any]:
     return primary
 
 
-def resolve_case_materials(cs: dict[str, Any]) -> dict[str, Any]:
+def resolve_case_materials(cs: dict[str, Any], input_dir: str | Path | None = None) -> dict[str, Any]:
+    """Discover and load every distinct material referenced by the case.
+
+    Materials are resolved from ``region`` lines in the LDG file.  If no
+    regions are present the ``materials`` list from the case spec is used as a
+    fallback.  When both are empty a ``ValueError`` is raised — the old
+    silent-Silicon default is removed.
+    """
+    if input_dir is None:
+        input_dir = resolve_input_dir()
     raw_names = [reg["material"] for reg in cs.get("regions", [])] or cs.get("materials", [])
     requested_names: list[str] = []
     seen: set[str] = set()
-    for name in raw_names or ["SILICON"]:
+    for name in raw_names:
         key = material_key(str(name))
         if key not in seen:
             requested_names.append(str(name))
             seen.add(key)
+    if not requested_names:
+        raise ValueError(
+            "No materials specified in the case. "
+            "Add at least one 'region ... MATERIAL' line to ldg.txt."
+        )
     entries: list[dict[str, Any]] = []
     for raw_name in requested_names:
         key = material_key(raw_name)
-        entries.append({"name": raw_name, "key": key, "mat": load_material(key, raw_name)})
-    primary_name = requested_names[0] if requested_names else "SILICON"
+        entries.append({"name": raw_name, "key": key, "mat": load_material(key, raw_name, input_dir=input_dir)})
+    primary_name = requested_names[0]
     primary_key = material_key(primary_name)
     primary_index = 1
     for i, entry in enumerate(entries, start=1):
@@ -1105,17 +1167,58 @@ def resolve_case_materials(cs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def load_material(key: str, raw_name: str) -> dict[str, Any]:
-    if key == "SILICON":
-        mat = mat_silicon_100()
-    elif key == "IGZO":
-        mat = mat_igzo()
-    else:
-        print(f'[warn] unsupported material "{raw_name}", falling back to Silicon')
-        mat = mat_silicon_100()
-    mat["case_material"] = key
-    mat["case_material_label"] = raw_name
-    return mat
+def load_material(key: str, raw_name: str, input_dir: str | Path | None = None) -> dict[str, Any]:
+    """Load a material by canonical key from a phonon-dispersion file.
+
+    Searches the input directory for ``phonon_dispersion_{key}.txt`` (case-
+    sensitive first, then case-insensitive fallback).  Also tries the original
+    *raw_name* and common aliases so that a file named
+    ``phonon_dispersion_Si.txt`` is found when the canonical key is
+    ``SILICON``.
+    """
+    if input_dir is None:
+        input_dir = resolve_input_dir()
+    base = Path(input_dir)
+    # Collect all candidate file-name stems to try (without the .txt suffix).
+    # We try: the canonical key, the raw name, the uppercase raw name, and
+    # both key and raw name with common capitalisation.
+    search_names: set[str] = set()
+    for name in (key, raw_name):
+        search_names.add(f"phonon_dispersion_{name}")
+        search_names.add(f"phonon_dispersion_{name.upper()}")
+        search_names.add(f"phonon_dispersion_{name.lower()}")
+        search_names.add(f"phonon_dispersion_{name.capitalize()}")
+    # Build a short-list of likely full paths.
+    candidates: list[Path] = []
+    for stem in sorted(search_names):
+        p = base / f"{stem}.txt"
+        if p not in candidates:
+            candidates.append(p)
+    # Also scan the directory for any file whose name starts with
+    # "phonon_dispersion_" and whose stem (without extension) matches one
+    # of our search names case-insensitively.
+    search_lower = {s.lower() for s in search_names}
+    if base.is_dir():
+        for child in base.iterdir():
+            if not child.is_file():
+                continue
+            cname = child.name
+            if not cname.lower().startswith("phonon_dispersion_"):
+                continue
+            stem_lower = cname.rsplit(".", 1)[0].lower() if "." in cname else cname.lower()
+            if stem_lower in search_lower:
+                if child not in candidates:
+                    candidates.append(child)
+    for path in candidates:
+        if path.is_file():
+            mat = mat_from_phonon_dispersion_file(file_path=path, material_name=raw_name)
+            mat["case_material"] = key
+            mat["case_material_label"] = raw_name
+            return mat
+    raise FileNotFoundError(
+        f"No dispersion file found for material key={key!r} (raw name={raw_name!r}) "
+        f"in {str(base)!r}. Expected a file named phonon_dispersion_{key}.txt"
+    )
 
 
 def parse_header_metadata(filepath: str | Path) -> dict[str, Any]:
@@ -1235,6 +1338,7 @@ def mat_from_phonon_dispersion_file(
 
 
 def mat_silicon_100(file_path: str | Path | None = None) -> dict[str, Any]:
+    """Convenience wrapper — returns Silicon (100) material with hard-coded branch metadata."""
     if file_path is None:
         file_path = resolve_input_dir() / "phonon_dispersion_Si.txt"
     mat = mat_from_phonon_dispersion_file(
@@ -1249,6 +1353,11 @@ def mat_silicon_100(file_path: str | Path | None = None) -> dict[str, Any]:
 
 
 def mat_igzo(file_path: str | Path | None = None) -> dict[str, Any]:
+    """Convenience wrapper — returns IGZO material.
+
+    Branch metadata is read from the dispersion-file header when available;
+    otherwise the defaults in ``mat_from_phonon_dispersion_file`` apply.
+    """
     if file_path is None:
         file_path = resolve_input_dir() / "phonon_dispersion_IGZO.txt"
     return mat_from_phonon_dispersion_file(file_path=file_path, material_name="IGZO")
@@ -1286,7 +1395,7 @@ def build_branch_lookup(spec: dict[str, Any], branch_index: int) -> dict[str, An
     }
 
 
-def build_spectral_grid(mat: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
+def build_spectral_grid(mat: dict[str, Any], opts: dict[str, Any], global_w_edges: np.ndarray | None = None) -> dict[str, Any]:
     if opts.get("T0") is None:
         raise ValueError("opts.T0 must be provided before build_spectral_grid")
     T0 = float(opts["T0"])
@@ -1328,11 +1437,15 @@ def build_spectral_grid(mat: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
     else:
         cdf_vol[:] = 0.0
     wtab_all = np.maximum(np.asarray(mat["omega_tab"], dtype=np.float64), 0.0)
-    wmin = max(0.0, float(np.min(wtab_all)))
-    wmax = float(np.max(wtab_all))
-    if not np.isfinite(wmin) or not np.isfinite(wmax) or wmax <= wmin:
-        wmin, wmax = 0.0, 1.0
-    w_edges = np.linspace(wmin, wmax, Nw + 1)
+    if global_w_edges is not None:
+        w_edges = np.asarray(global_w_edges, dtype=np.float64)
+        Nw = w_edges.size - 1
+    else:
+        wmin = max(0.0, float(np.min(wtab_all)))
+        wmax = float(np.max(wtab_all))
+        if not np.isfinite(wmin) or not np.isfinite(wmax) or wmax <= wmin:
+            wmin, wmax = 0.0, 1.0
+        w_edges = np.linspace(wmin, wmax, Nw + 1)
     w_mid_1 = 0.5 * (w_edges[:-1] + w_edges[1:])
     dw = np.diff(w_edges)
     w_mid = np.tile(w_mid_1.reshape(1, -1), (B, 1))
@@ -1417,6 +1530,40 @@ def build_spectral_grid(mat: dict[str, Any], opts: dict[str, Any]) -> dict[str, 
     b_ta = next((i for i, name in enumerate(branches) if "TA" in name.upper().replace(" ", "")), 1 if B > 1 else 0)
     spec["omega_cut_ta"] = float(material_eval_omega(mat, b_ta, np.array([0.5 * spec["qmax"]], dtype=np.float64))[0])
     return spec
+
+
+def build_multimaterial_specs(
+    material_library: dict[str, Any],
+    opts: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build a spectral-grid spec for every material in the library.
+
+    All materials share the same global frequency grid (*w_edges*) so that
+    DMM interface lookups can use a common frequency axis.
+    """
+    entries = material_library.get("list", [])
+    if not entries:
+        raise ValueError("material_library contains no materials")
+    # Phase 1 — determine global frequency range across all materials.
+    Nw = int(get_or(opts, "n_w", 1000))
+    w_min_global = np.inf
+    w_max_global = -np.inf
+    for entry in entries:
+        mat = entry["mat"]
+        wtab = np.maximum(np.asarray(mat["omega_tab"], dtype=np.float64), 0.0)
+        w_min_global = min(w_min_global, float(np.min(wtab)))
+        w_max_global = max(w_max_global, float(np.max(wtab)))
+    if not np.isfinite(w_min_global) or not np.isfinite(w_max_global) or w_max_global <= w_min_global:
+        w_min_global, w_max_global = 0.0, 1.0
+    global_w_edges = np.linspace(max(0.0, w_min_global), w_max_global, Nw + 1)
+    # Phase 2 — build one spec per material.
+    specs: list[dict[str, Any]] = []
+    for entry in entries:
+        spec = build_spectral_grid(entry["mat"], opts, global_w_edges=global_w_edges)
+        spec["material_key"] = entry["key"]
+        spec["material_name"] = entry["name"]
+        specs.append(spec)
+    return specs
 
 
 def build_E_T_lookup(spec: dict[str, Any], cfg: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2036,12 +2183,19 @@ def sample_particles_for_cells(
         sgn = mode_sign[idx_pick, cell_pick].astype(np.int8)
         E = E_eff * sgn.astype(np.float64)
     sampled_cells = cell_ids[cell_pick].astype(np.int32)
+    # Compute per-particle material_id (0-based) from the mesh material index.
+    cell_mat_idx = np.asarray(mesh.get("cell_material_index", np.zeros(1, dtype=np.int32)), dtype=np.int32)
+    mat_id = np.zeros(Nsp_tot, dtype=np.int32)
+    valid_cells = (sampled_cells >= 1) & (sampled_cells <= cell_mat_idx.size)
+    mat_id[valid_cells] = cell_mat_idx[sampled_cells[valid_cells] - 1] - 1  # 1-based -> 0-based
+    mat_id[~valid_cells] = -1
     x, y, z = uniform_positions_in_cells(mesh, sampled_cells)
     ids = np.arange(id_start + 1, id_start + Nsp_tot + 1, dtype=np.int64)
     p = ParticleBlock(
         id=ids,
         par_id=ids.copy(),
         cell=sampled_cells,
+        material_id=mat_id,
         x=x,
         y=y,
         z=z,
@@ -2128,12 +2282,10 @@ def reference_temperature_from_state(state: SimulationState, opts: dict[str, Any
 def update_temperature_from_energy(
     state: SimulationState,
     mesh: dict[str, Any],
-    spec: dict[str, Any],
+    spec: dict[str, Any] | list[dict[str, Any]],
     opts: dict[str, Any],
-    lut: dict[str, Any] | None = None,
+    lut: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    if lut is None:
-        lut = build_E_T_lookup(spec, et_lookup_cfg_from_opts(opts))
     Vc = cell_volumes(mesh)
     Nc = Vc.size
     if len(state.p) == 0:
@@ -2144,30 +2296,58 @@ def update_temperature_from_energy(
     Ulocal = np.zeros(Nc, dtype=np.float64)
     mask = Vc > 0
     Ulocal[mask] = Ecell[mask] / Vc[mask]
+    # Build or normalise LUTs.
+    if isinstance(lut, dict) or lut is None:
+        _luts: list[dict[str, Any]] = [lut] if lut is not None else [build_E_T_lookup(spec if isinstance(spec, dict) else spec[0], et_lookup_cfg_from_opts(opts))]
+    else:
+        _luts = list(lut)
+    cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(Nc, dtype=np.int32)), dtype=np.int32)
+    Tnew = np.zeros(Nc, dtype=np.float64)
     if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
         Tref_cell = reference_temperature_from_state(state, opts, Nc)
-        Tref_clamped = np.clip(Tref_cell, lut["T"][0], lut["T"][-1])
-        Uref = np.asarray(lut["U_interp"](Tref_clamped), dtype=np.float64)
-        Uabs = Ulocal + Uref
     else:
-        Uabs = Ulocal
-    Umin, Umax = float(lut["U_mono"][0]), float(lut["U_mono"][-1])
-    Ucl = np.clip(Uabs, Umin, Umax)
-    Tnew = np.asarray(lut["inv_interp"](Ucl), dtype=np.float64)
-    mode_str = "dev" if str(get_or(opts, "mode", "absolute")).lower() == "deviational" else "abs"
-    if Tnew.size and bool(get_or(get_or(opts, "log", {}), "on", False)):
-        print(
-            f"[temp-update:{mode_str}] Np={len(state.p)} | E_total={Ecell.sum():.6e} J | "
-            f"T[min,mean,max]=[{Tnew.min():.2f}, {Tnew.mean():.2f}, {Tnew.max():.2f}] K"
-        )
+        Tref_cell = np.zeros(Nc, dtype=np.float64)
+    for mi, lu in enumerate(_luts):
+        cell_mask = (cell_mat == (mi + 1)) & mask
+        if not np.any(cell_mask):
+            continue
+        Ul = Ulocal[cell_mask]
+        if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+            Tref = np.clip(Tref_cell[cell_mask], lu["T"][0], lu["T"][-1])
+            Uref = np.asarray(lu["U_interp"](Tref), dtype=np.float64)
+            Uabs = Ul + Uref
+        else:
+            Uabs = Ul
+        Umin, Umax = float(lu["U_mono"][0]), float(lu["U_mono"][-1])
+        Ucl = np.clip(Uabs, Umin, Umax)
+        Tnew[cell_mask] = np.asarray(lu["inv_interp"](Ucl), dtype=np.float64)
+    Uabs_all = Ulocal.copy()
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+        for mi, lu in enumerate(_luts):
+            cell_mask = cell_mat == (mi + 1)
+            if not np.any(cell_mask):
+                continue
+            Tref = np.clip(Tref_cell[cell_mask], lu["T"][0], lu["T"][-1])
+            Uabs_all[cell_mask] = Ulocal[cell_mask] + np.asarray(lu["U_interp"](Tref), dtype=np.float64)
+    Tmin = float(np.min(Tnew)) if Tnew.size else np.nan
+    Tmean = float(np.mean(Tnew)) if Tnew.size else np.nan
+    Tmax = float(np.max(Tnew)) if Tnew.size else np.nan
+    lut0 = _luts[0]
     aux = {
         "Ecell": Ecell,
         "Vcell": Vc,
         "Ulocal": Ulocal,
-        "Uabs": Uabs,
-        "clip_low": float(np.mean(Uabs < Umin)),
-        "clip_high": float(np.mean(Uabs > Umax)),
-        "LUT": lut,
+        "Uabs": Uabs_all,
+        "clip_low": 0.0,
+        "clip_high": 0.0,
+        "clip_low_count": 0,
+        "clip_high_count": 0,
+        "Tmin": Tmin,
+        "Tmean": Tmean,
+        "Tmax": Tmax,
+        "Tlut_min": float(lut0["T"][0]),
+        "Tlut_max": float(lut0["T"][-1]),
+        "LUT": lut0,
     }
     return Tnew, aux
 
@@ -2184,25 +2364,68 @@ def active_total_scattering_rate_for_particles(opts: dict[str, Any], r_tau: np.n
     return np.sum(r_all, axis=1)
 
 
-def pp_only_rate_for_particles(branch_id: np.ndarray, r_tau: np.ndarray, spec: dict[str, Any]) -> np.ndarray:
+def _multi_branch_is(branch_id: np.ndarray, material_id: np.ndarray, branch_array_2d: np.ndarray) -> np.ndarray:
+    """Index into a (n_materials, max_B) branch-type array per particle.
+
+    Returns a bool array of shape (Np,).  Material indices outside [0, n_mats)
+    are treated as material 0.
+    """
+    b = np.asarray(branch_id, dtype=np.int64).reshape(-1) - 1
+    mid = np.asarray(material_id, dtype=np.int64).reshape(-1)
+    n_mat = branch_array_2d.shape[0]
+    mid = np.clip(mid, 0, n_mat - 1)
+    # Fast path: single material
+    if n_mat == 1:
+        arr = np.asarray(branch_array_2d[0], dtype=np.bool_)
+        valid = (b >= 0) & (b < arr.size)
+        out = np.zeros(b.size, dtype=bool)
+        out[valid] = arr[b[valid]]
+        return out
+    # General path
+    max_b = branch_array_2d.shape[1]
+    valid = (b >= 0) & (b < max_b)
+    out = np.zeros(b.size, dtype=bool)
+    flat_idx = mid[valid] * max_b + b[valid]
+    flat = branch_array_2d.ravel()
+    out[valid] = flat[flat_idx]
+    return out
+
+
+def pp_only_rate_for_particles(
+    branch_id: np.ndarray,
+    r_tau: np.ndarray,
+    spec: dict[str, Any] | list[dict[str, Any]],
+    material_id: np.ndarray | None = None,
+) -> np.ndarray:
     b = np.asarray(branch_id, dtype=np.int32).reshape(-1)
     rates = np.asarray(r_tau, dtype=np.float64)
     if b.size == 0 or rates.size == 0:
         return np.zeros(b.size, dtype=np.float64)
     rLA, rTAN, rTAU, rLTO = [np.maximum(rates[:, i], 0.0) for i in range(4)]
     rPP = np.zeros(b.size, dtype=np.float64)
-    bi = b.astype(np.int64) - 1
-    valid = (bi >= 0) & (bi < len(np.asarray(spec["branch_is_la"], dtype=np.bool_)))
-    is_la = np.zeros(b.size, dtype=bool)
-    is_ta = np.zeros(b.size, dtype=bool)
-    is_loto = np.zeros(b.size, dtype=bool)
-    if np.any(valid):
-        branch_is_la = np.asarray(spec["branch_is_la"], dtype=np.bool_)
-        branch_is_ta = np.asarray(spec["branch_is_ta"], dtype=np.bool_)
-        branch_is_loto = np.asarray(spec["branch_is_loto"], dtype=np.bool_)
-        is_la[valid] = branch_is_la[bi[valid]]
-        is_ta[valid] = branch_is_ta[bi[valid]]
-        is_loto[valid] = branch_is_loto[bi[valid]]
+    if material_id is None:
+        material_id = np.zeros(b.size, dtype=np.int32)
+    # Build padded 2D branch arrays.
+    if isinstance(spec, dict):
+        specs = [spec]
+    else:
+        specs = list(spec)
+    n_mat = len(specs)
+    max_B = max(int(s.get("B", 0)) for s in specs)
+    b_la = np.zeros((n_mat, max_B), dtype=np.bool_)
+    b_ta = np.zeros((n_mat, max_B), dtype=np.bool_)
+    b_loto = np.zeros((n_mat, max_B), dtype=np.bool_)
+    for mi, s in enumerate(specs):
+        bla = np.asarray(s.get("branch_is_la", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        bta = np.asarray(s.get("branch_is_ta", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        blo = np.asarray(s.get("branch_is_loto", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        Bm = bla.size
+        b_la[mi, :Bm] = bla
+        b_ta[mi, :Bm] = bta
+        b_loto[mi, :Bm] = blo
+    is_la = _multi_branch_is(b, material_id, b_la)
+    is_ta = _multi_branch_is(b, material_id, b_ta)
+    is_loto = _multi_branch_is(b, material_id, b_loto)
     rPP[is_la] = rLA[is_la]
     rPP[is_ta] = rTAN[is_ta] + rTAU[is_ta]
     rPP[is_loto] = rLTO[is_loto]
@@ -3082,7 +3305,7 @@ def collect_reservoir_cells(mesh: dict[str, Any]) -> np.ndarray:
     return np.unique(np.concatenate(cells).astype(np.int64))
 
 
-def refresh_reservoir_particles(state: SimulationState, mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any]) -> tuple[SimulationState, dict[str, Any]]:
+def refresh_reservoir_particles(state: SimulationState, mesh: dict[str, Any], spec: dict[str, Any] | list[dict[str, Any]], opts: dict[str, Any]) -> tuple[SimulationState, dict[str, Any]]:
     info = {
         "refreshed": False,
         "cell_ids": np.zeros(0, dtype=np.int64),
@@ -3108,21 +3331,52 @@ def refresh_reservoir_particles(state: SimulationState, mesh: dict[str, Any], sp
         keep_mask = ~np.isin(state.p.cell.astype(np.int64), cells)
     kept = state.p.take(keep_mask)
     removed = int(len(state.p) - len(kept))
-    newp, sample_info = sample_particles_for_cells(mesh, spec, opts, cells, target_T_all[cells - 1], Tref_all[cells - 1], next_particle_id(kept))
-    state.p = kept.append(newp)
+    refresh_opts = dict(opts)
+    refresh_opts["E_eff"] = float(state.WE)
+    # Normalise specs.
+    if isinstance(spec, dict):
+        _specs_r: list[dict[str, Any]] = [spec]
+    else:
+        _specs_r = list(spec)
+    cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(Nc, dtype=np.int32)), dtype=np.int32)
+    blocks: list[ParticleBlock] = []
+    total_added = 0
+    next_id = next_particle_id(kept)
+    for mi, sp in enumerate(_specs_r):
+        # Reservoir cells belonging to this material.
+        mat_cells = cells[cell_mat[cells - 1] == (mi + 1)]
+        if mat_cells.size == 0:
+            continue
+        newp, sinfo = sample_particles_for_cells(
+            mesh, sp, refresh_opts, mat_cells,
+            target_T_all[mat_cells - 1],
+            Tref_all[mat_cells - 1],
+            next_id,
+        )
+        if len(newp):
+            blocks.append(newp)
+            next_id = int(newp.id.max())
+        total_added += sinfo["Nsp_tot"]
+    if blocks:
+        newp_all = blocks[0]
+        for blk in blocks[1:]:
+            newp_all = newp_all.append(blk)
+    else:
+        newp_all = ParticleBlock.empty()
+    state.p = kept.append(newp_all)
     state.Nsp_cell = np.bincount(state.p.cell.astype(np.int64) - 1, minlength=Nc).astype(np.int64) if len(state.p) else np.zeros(Nc, dtype=np.int64)
     mask = np.zeros(Nc, dtype=bool)
     mask[cells - 1] = True
     state.info["reservoir_cell_mask"] = mask
     state.info["reservoir_target_temperature_cell"] = target_T_all
     state.info["reservoir_reference_temperature_cell"] = Tref_all
-    state.info["reservoir_last_refresh_particles"] = sample_info["Nsp_tot"]
+    state.info["reservoir_last_refresh_particles"] = total_added
     info.update(
         {
             "refreshed": True,
             "cell_ids": cells,
             "removed_particles": removed,
-            "added_particles": int(sample_info["Nsp_tot"]),
+            "added_particles": total_added,
             "target_temperature_cell": target_T_all[cells - 1],
             "reference_temperature_cell": Tref_all[cells - 1],
         }
@@ -3206,6 +3460,12 @@ def emit_particles_from_Wbm_refsample(
     picked = np.searchsorted(cdf_cell, np.random.random(Nsp), side="left")
     picked = np.clip(picked, 0, cells.size - 1)
     sampled_cells = cells[picked].astype(np.int32)
+    # Per-particle material_id from mesh material index.
+    cell_mat_idx = np.asarray(mesh.get("cell_material_index", np.zeros(1, dtype=np.int32)), dtype=np.int32)
+    mat_id = np.zeros(Nsp, dtype=np.int32)
+    valid_cells = (sampled_cells >= 1) & (sampled_cells <= cell_mat_idx.size)
+    mat_id[valid_cells] = cell_mat_idx[sampled_cells[valid_cells] - 1] - 1
+    mat_id[~valid_cells] = -1
     x, y, z = uniform_positions_in_cells(mesh, sampled_cells)
     sign_vals = np.sign(Wbm.ravel(order="F")[lin]).astype(np.int8)
     sign_vals[sign_vals == 0] = 1
@@ -3217,6 +3477,7 @@ def emit_particles_from_Wbm_refsample(
         id=ids,
         par_id=ids.copy(),
         cell=sampled_cells,
+        material_id=mat_id,
         x=x,
         y=y,
         z=z,
@@ -3266,6 +3527,7 @@ def spawn_heat_source(opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str
 @njit(parallel=True, cache=True)
 def _precompute_relax_times_numba(
     cell_id: np.ndarray,
+    material_id: np.ndarray,
     b: np.ndarray,
     w: np.ndarray,
     vabs: np.ndarray,
@@ -3274,26 +3536,27 @@ def _precompute_relax_times_numba(
     vz: np.ndarray,
     q: np.ndarray,
     Tcell: np.ndarray,
-    branch_is_la: np.ndarray,
-    branch_is_ta: np.ndarray,
-    branch_is_loto: np.ndarray,
-    omega_cut: float,
-    B_L: float,
-    B_TN: float,
-    B_TU: float,
-    tau_LTO_ps: float,
-    A_imp: float,
-    B_imp: float,
-    C_imp: float,
-    bulk_L: float,
-    bulk_F: float,
-    Tsi: float,
-    Delta: float,
+    branch_is_la: np.ndarray,       # (n_materials, max_B)  — bool_
+    branch_is_ta: np.ndarray,       # (n_materials, max_B)  — bool_
+    branch_is_loto: np.ndarray,     # (n_materials, max_B)  — bool_
+    omega_cut: np.ndarray,          # (n_materials,)         — float64
+    B_L: np.ndarray,                # (n_materials,)
+    B_TN: np.ndarray,
+    B_TU: np.ndarray,
+    tau_LTO_ps: np.ndarray,
+    A_imp: np.ndarray,
+    B_imp: np.ndarray,
+    C_imp: np.ndarray,
+    bulk_L: np.ndarray,
+    bulk_F: np.ndarray,
+    Tsi: np.ndarray,
+    Delta: np.ndarray,
     n0: float,
     n1: float,
     n2: float,
 ) -> np.ndarray:
     Np = w.size
+    n_mat = B_L.size
     # r_tau columns:
     #   0 -> LA normal three-phonon rate
     #   1 -> TA normal three-phonon rate
@@ -3303,46 +3566,118 @@ def _precompute_relax_times_numba(
     #   5 -> boundary scattering rate
     out = np.zeros((Np, 6), dtype=np.float64)
     for i in prange(Np):
+        mi = material_id[i]
+        # Clamp material index to valid range; if out of bounds use material 0.
+        if mi < 0 or mi >= n_mat:
+            mi = 0
         bi = b[i] - 1
         wi = w[i]
         vg_i = vabs[i]
         cid = cell_id[i] - 1
         T = max(Tcell[cid], 1e-6)
-        if branch_is_la[bi]:
-            out[i, 0] = B_L * wi * wi * T**3
-        if branch_is_ta[bi]:
-            out[i, 1] = B_TN * wi * T**4
-            if wi > omega_cut:
+        if branch_is_la[mi, bi]:
+            out[i, 0] = B_L[mi] * wi * wi * T**3
+        if branch_is_ta[mi, bi]:
+            out[i, 1] = B_TN[mi] * wi * T**4
+            if wi > omega_cut[mi]:
                 x = HBAR * wi / (K_B * T)
-                out[i, 2] = B_TU * wi * wi / max(math.sinh(x), 1e-12)
-        if branch_is_loto[bi]:
-            out[i, 3] = 1.0 / (tau_LTO_ps * 1e-12)
-        out[i, 4] = A_imp * wi**4 + B_imp * wi**2 + C_imp
-        if Tsi > 0.0:
+                out[i, 2] = B_TU[mi] * wi * wi / max(math.sinh(x), 1e-12)
+        if branch_is_loto[mi, bi]:
+            out[i, 3] = 1.0 / (tau_LTO_ps[mi] * 1e-12)
+        out[i, 4] = A_imp[mi] * wi**4 + B_imp[mi] * wi**2 + C_imp[mi]
+        tsi_val = Tsi[mi]
+        delta_val = Delta[mi]
+        bulk_l_val = bulk_L[mi]
+        bulk_f_val = bulk_F[mi]
+        if tsi_val > 0.0:
             normv = math.sqrt(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
             if normv > 0.0:
                 cosB = abs((vx[i] * n0 + vy[i] * n1 + vz[i] * n2) / normv)
             else:
                 cosB = math.sqrt(1.0 / 3.0)
-            p_spec = math.exp(-4.0 * (max(q[i], 0.0) * Delta) ** 2 * cosB * cosB)
+            p_spec = math.exp(-4.0 * (max(q[i], 0.0) * delta_val) ** 2 * cosB * cosB)
             Ffilm = (1.0 - p_spec) / (1.0 + p_spec)
-            out[i, 5] = vg_i / max(Tsi, 1e-12) * Ffilm
-        elif bulk_L > 0.0:
-            out[i, 5] = vg_i / max(bulk_L * bulk_F, 1e-12)
+            out[i, 5] = vg_i / max(tsi_val, 1e-12) * Ffilm
+        elif bulk_l_val > 0.0:
+            out[i, 5] = vg_i / max(bulk_l_val * bulk_f_val, 1e-12)
     return out
 
 
-def precompute_relax_times(state: SimulationState, Tcell: np.ndarray, opts: dict[str, Any], spec: dict[str, Any]) -> np.ndarray:
+def _resolve_scattering_param(opts: dict[str, Any], key: str, material_index: int, specs: list[dict[str, Any]], default: float) -> float:
+    """Resolve a scattering parameter for a specific material.
+
+    Priority: material_scattering dict → per-spec override → global opts → hard-coded default.
+    """
+    mat_scat = opts.get("material_scattering", {})
+    spec = specs[material_index] if 0 <= material_index < len(specs) else {}
+    mat_key = spec.get("material_key", "")
+    if mat_key and mat_key in mat_scat and key in mat_scat[mat_key]:
+        return float(mat_scat[mat_key][key])
+    return float(get_or(opts, key, default))
+
+
+def _build_per_material_param_array(opts: dict[str, Any], specs: list[dict[str, Any]], key: str, default: float) -> np.ndarray:
+    """Build a (n_materials,) array of a scattering parameter."""
+    n = len(specs)
+    arr = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        arr[i] = _resolve_scattering_param(opts, key, i, specs, default)
+    return arr
+
+
+def precompute_relax_times(
+    state: SimulationState,
+    Tcell: np.ndarray,
+    opts: dict[str, Any],
+    specs: list[dict[str, Any]] | dict[str, Any],
+) -> np.ndarray:
+    """Compute per-particle relaxation-time matrix (Np × 6).
+
+    ``specs`` may be a single-material spec dict (legacy) or a list of
+    per-material spec dicts (multi-material).
+    """
     if len(state.p) == 0:
         return np.zeros((0, 6), dtype=np.float64)
+    # Normalise to list form.
+    if isinstance(specs, dict):
+        _specs: list[dict[str, Any]] = [specs]
+    else:
+        _specs = list(specs)
+    n_materials = len(_specs)
     parallel_cfg = dict(get_or(opts, "parallel", {}))
     ensure_num_threads(int(get_or(parallel_cfg, "num_threads", os.cpu_count() or 1)))
     n_hat = np.asarray(get_or(opts, "transport_n", np.array([0.0, 0.0, 1.0])), dtype=np.float64).reshape(3)
     n_hat /= max(np.linalg.norm(n_hat), np.finfo(np.float64).eps)
-    # Return shape is (Np, 6), with the column order documented in
-    # _precompute_relax_times_numba() above.
+    # Pad branch metadata arrays to max_B across all materials.
+    max_B = max(int(s.get("B", 0)) for s in _specs)
+    branch_la = np.zeros((n_materials, max_B), dtype=np.bool_)
+    branch_ta = np.zeros((n_materials, max_B), dtype=np.bool_)
+    branch_loto = np.zeros((n_materials, max_B), dtype=np.bool_)
+    omega_cut = np.zeros(n_materials, dtype=np.float64)
+    for mi, spec in enumerate(_specs):
+        b_la = np.asarray(spec.get("branch_is_la", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        b_ta = np.asarray(spec.get("branch_is_ta", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        b_loto = np.asarray(spec.get("branch_is_loto", np.zeros(0, dtype=np.bool_)), dtype=np.bool_)
+        Bm = b_la.size
+        branch_la[mi, :Bm] = b_la
+        branch_ta[mi, :Bm] = b_ta
+        branch_loto[mi, :Bm] = b_loto
+        omega_cut[mi] = float(spec.get("omega_cut_ta", 0.0))
+    # Build per-material parameter arrays.
+    BL_arr = _build_per_material_param_array(opts, _specs, "BL", 1.18e-24)
+    BTN_arr = _build_per_material_param_array(opts, _specs, "BTN", 10.5e-13)
+    BTU_arr = _build_per_material_param_array(opts, _specs, "BTU", 2.89e-18)
+    tau_LTO_arr = _build_per_material_param_array(opts, _specs, "tau_LTO_ps", 3.5)
+    A_imp_arr = _build_per_material_param_array(opts, _specs, "A_imp", 1.32e-45)
+    B_imp_arr = _build_per_material_param_array(opts, _specs, "B_imp", 0.0)
+    C_imp_arr = _build_per_material_param_array(opts, _specs, "C_imp", 0.0)
+    bulk_L_arr = _build_per_material_param_array(opts, _specs, "PB_bulk_L", 7.16e-3)
+    bulk_F_arr = _build_per_material_param_array(opts, _specs, "PB_bulk_F", 0.68)
+    Tsi_arr = _build_per_material_param_array(opts, _specs, "PB_Tsi", 0.0)
+    Delta_arr = _build_per_material_param_array(opts, _specs, "PB_Delta", 0.0)
     return _precompute_relax_times_numba(
         state.p.cell.astype(np.int64),
+        state.p.material_id.astype(np.int64),
         state.p.b.astype(np.int64),
         state.p.w.astype(np.float64),
         state.p.vabs.astype(np.float64),
@@ -3351,21 +3686,21 @@ def precompute_relax_times(state: SimulationState, Tcell: np.ndarray, opts: dict
         state.p.vz.astype(np.float64),
         state.p.q.astype(np.float64),
         np.asarray(Tcell, dtype=np.float64),
-        np.asarray(spec["branch_is_la"], dtype=np.bool_),
-        np.asarray(spec["branch_is_ta"], dtype=np.bool_),
-        np.asarray(spec["branch_is_loto"], dtype=np.bool_),
-        float(spec["omega_cut_ta"]),
-        float(get_or(opts, "BL", 1.18e-24)),
-        float(get_or(opts, "BTN", 10.5e-13)),
-        float(get_or(opts, "BTU", 2.89e-18)),
-        float(get_or(opts, "tau_LTO_ps", 3.5)),
-        float(get_or(opts, "A_imp", 1.32e-45)),
-        float(get_or(opts, "B_imp", 0.0)),
-        float(get_or(opts, "C_imp", 0.0)),
-        float(get_or(opts, "PB_bulk_L", 7.16e-3)),
-        float(get_or(opts, "PB_bulk_F", 0.68)),
-        float(get_or(opts, "PB_Tsi", 0.0)),
-        float(get_or(opts, "PB_Delta", 0.0)),
+        branch_la,
+        branch_ta,
+        branch_loto,
+        omega_cut,
+        BL_arr,
+        BTN_arr,
+        BTU_arr,
+        tau_LTO_arr,
+        A_imp_arr,
+        B_imp_arr,
+        C_imp_arr,
+        bulk_L_arr,
+        bulk_F_arr,
+        Tsi_arr,
+        Delta_arr,
         float(n_hat[0]),
         float(n_hat[1]),
         float(n_hat[2]),
@@ -3486,17 +3821,23 @@ def scattering_rate_table_at_T(spec: dict[str, Any], T: float, opts: dict[str, A
 def particle_scattering(
     state: SimulationState,
     mesh: dict[str, Any],
-    spec: dict[str, Any],
+    spec: dict[str, Any] | list[dict[str, Any]],
     opts: dict[str, Any],
     dt: float,
     Tstar: np.ndarray,
     r_tau: np.ndarray,
     scatter_lut: dict[str, Any] | None = None,
     Tscatt_cell: np.ndarray | None = None,
-) -> tuple[SimulationState, np.ndarray]:
+) -> tuple[SimulationState, dict[str, Any]]:
     Nc = infer_Nc(mesh)
     if len(state.p) == 0:
-        return state, np.zeros(Nc, dtype=np.float64)
+        return state, {"hits": 0, "hits_expected": 0.0, "pp": 0, "pi": 0, "pb": 0}
+    # Normalise to list form.
+    if isinstance(spec, dict):
+        _specs: list[dict[str, Any]] = [spec]
+    else:
+        _specs = list(spec)
+    single_mat = len(_specs) == 1
     pb_on = bool(get_or(get_or(opts, "scatter", {}), "pb_on", False))
     b = state.p.b.copy().astype(np.int32)
     w = state.p.w.copy()
@@ -3505,15 +3846,13 @@ def particle_scattering(
     vy = state.p.vy.copy()
     vz = state.p.vz.copy()
     cell_id = state.p.cell.astype(np.int64)
+    mat_id = state.p.material_id.copy()
     # r_tau[:, i] follows the precomputed order:
     # LA normal, TA normal, TA umklapp, LO/TO, impurity, boundary.
     rLA, rTAN, rTAU, rLTO, rPI, rPB = [np.maximum(r_tau[:, i], 0.0) for i in range(6)]
     if not pb_on:
         rPB[:] = 0.0
-    # Event selection still uses PP / PI / PB channel splitting, but the
-    # scattering-sampling temperature and the resampling Gamma table use the
-    # active total scattering rate.
-    rPP = pp_only_rate_for_particles(b, r_tau, spec)
+    rPP = pp_only_rate_for_particles(b, r_tau, spec, mat_id)
     rTOT = rPP + rPI + rPB
     hit = np.random.random(len(state.p)) < (1.0 - np.exp(-dt * np.maximum(rTOT, 0.0)))
     sel = np.random.random(np.count_nonzero(hit)) * rTOT[hit]
@@ -3534,49 +3873,67 @@ def particle_scattering(
     if np.any(isPP):
         iiPP = np.flatnonzero(isPP)
         cPP = cell_id[iiPP]
+        mPP = mat_id[iiPP]
         Tref_cell = reference_temperature_from_state(state, opts, Nc)
         if Tscatt_cell is None:
             Tscatt_cell, _ = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, scatter_lut)
-        B, Nw = spec["w_mid"].shape
-        w_edges = get_w_edges(spec)
-        fallback = build_pp_rate_table_from_particles(b.astype(np.int64), w, rTOT, w_edges, B, Nw)
         use_center = bool(get_or(opts, "use_bin_center_w", True))
-        DOS = np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0)
-        dw2 = ensure_2d_dw(spec)
-        wmid = np.asarray(spec["w_mid"], dtype=np.float64)
         b_new = np.zeros(iiPP.size, dtype=np.int32)
         w_new = np.zeros(iiPP.size, dtype=np.float64)
         vabs_new = np.zeros(iiPP.size, dtype=np.float64)
+        # Group PP particles by (material_id, cell) and resample within each material's spectral grid.
+        # Precompute per-material fallback tables; cache in a dict keyed by material index.
+        fallback_cache: dict[int, np.ndarray] = {}
+        for mi in range(len(_specs)):
+            si = _specs[mi]
+            Bi, Nwi = si["w_mid"].shape
+            wi_edges = get_w_edges(si)
+            fallback_cache[mi] = build_pp_rate_table_from_particles(
+                b.astype(np.int64), w, rTOT, wi_edges, Bi, Nwi
+            )
         for cid in np.unique(cPP):
-            loc = cPP == cid
+            # Determine which material this cell belongs to (most common among particles here).
+            cell_mask = cPP == cid
+            mat_ids_in_cell = mPP[cell_mask]
+            unique_mats, counts = np.unique(mat_ids_in_cell, return_counts=True)
+            dominant_mat = unique_mats[np.argmax(counts)]
+            dominant_mat = max(0, min(dominant_mat, len(_specs) - 1))
+            sp = _specs[dominant_mat]
+            Bm, Nwm = sp["w_mid"].shape
+            w_edges_m = get_w_edges(sp)
+            fallback = fallback_cache.get(dominant_mat,
+                build_pp_rate_table_from_particles(b.astype(np.int64), w, rTOT, w_edges_m, Bm, Nwm))
+            DOS_m = np.maximum(np.asarray(sp["DOS_w_b"], dtype=np.float64), 0.0)
+            dw2_m = ensure_2d_dw(sp)
+            wmid_m = np.asarray(sp["w_mid"], dtype=np.float64)
             Tcell_loc = float(max(Tscatt_cell[int(cid) - 1], 1e-12))
-            Gamma = scattering_rate_table_at_T(spec, Tcell_loc, opts, fallback)
+            Gamma = scattering_rate_table_at_T(sp, Tcell_loc, opts, fallback)
             if str(get_or(opts, "mode", "absolute")).lower() == "absolute":
-                W = HBAR * wmid * DOS * bose_occupation(wmid, Tcell_loc) * Gamma * dw2
+                W = HBAR * wmid_m * DOS_m * bose_occupation(wmid_m, Tcell_loc) * Gamma * dw2_m
             else:
                 Tref_loc = float(max(Tref_cell[int(cid) - 1], 1e-12))
-                dNB = bose_occupation(wmid, Tcell_loc) - bose_occupation(wmid, Tref_loc)
-                W = HBAR * wmid * DOS * np.abs(dNB) * Gamma * dw2
+                dNB = bose_occupation(wmid_m, Tcell_loc) - bose_occupation(wmid_m, Tref_loc)
+                W = HBAR * wmid_m * DOS_m * np.abs(dNB) * Gamma * dw2_m
             W = np.maximum(np.nan_to_num(W, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
             if not np.any(W > 0):
                 W[:] = 1.0
             cdf = np.cumsum(W.ravel(order="F"))
             cdf /= cdf[-1]
-            draws = np.random.random(np.count_nonzero(loc))
+            draws = np.random.random(np.count_nonzero(cell_mask))
             lin = np.searchsorted(cdf, draws, side="left")
-            lin = np.clip(lin, 0, B * Nw - 1)
-            b_pick = (lin % B + 1).astype(np.int32)
-            m_pick = (lin // B + 1).astype(np.int32)
-            if use_center or "w_edges" not in spec or len(spec["w_edges"]) != Nw + 1:
-                w_pick = wmid[b_pick - 1, m_pick - 1]
+            lin = np.clip(lin, 0, Bm * Nwm - 1)
+            b_pick = (lin % Bm + 1).astype(np.int32)
+            m_pick = (lin // Bm + 1).astype(np.int32)
+            if use_center or "w_edges" not in sp or len(sp["w_edges"]) != Nwm + 1:
+                w_pick = wmid_m[b_pick - 1, m_pick - 1]
             else:
-                w_lo = w_edges[m_pick - 1]
-                w_hi = w_edges[m_pick]
+                w_lo = w_edges_m[m_pick - 1]
+                w_hi = w_edges_m[m_pick]
                 w_pick = w_lo + (w_hi - w_lo) * np.random.random(draws.size)
-            _, v_pick = q_vabs_from_w_table(spec, w_pick, b_pick)
-            b_new[loc] = b_pick
-            w_new[loc] = w_pick
-            vabs_new[loc] = v_pick
+            _, v_pick = q_vabs_from_w_table(sp, w_pick, b_pick)
+            b_new[cell_mask] = b_pick
+            w_new[cell_mask] = w_pick
+            vabs_new[cell_mask] = v_pick
         dirs = rand_unit_vec_batch(iiPP.size)
         b[iiPP] = b_new
         w[iiPP] = w_new
@@ -3592,22 +3949,36 @@ def particle_scattering(
         state.p.vx = vx
         state.p.vy = vy
         state.p.vz = vz
-        state.p.q = q_vabs_from_w_table(spec, state.p.w, state.p.b)[0]
-    after_energy = np.bincount(state.p.cell.astype(np.int64) - 1, weights=state.p.E, minlength=Nc).astype(np.float64) if len(state.p) else np.zeros(Nc, dtype=np.float64)
-    if bool(get_or(get_or(opts, "log", {}), "on", False)):
-        hits_expected = float(np.sum(1.0 - np.exp(-dt * np.maximum(rTOT, 0.0))))
-        print(
-            f"        [scatter] N={len(state.p)} | hits={int(np.count_nonzero(hit))} "
-            f"exp={hits_expected:.1f} "
-            f"(PP={int(np.count_nonzero(isPP))}, PI={int(np.count_nonzero(isPI))}, PB={int(np.count_nonzero(isPB))}) "
-            f"| E_total={float(state.p.E.sum()):.3e} J"
-        )
-    return state, after_energy
+        # Recompute wavevectors — dispatch to correct material spec per particle.
+        if single_mat:
+            state.p.q = q_vabs_from_w_table(_specs[0], state.p.w, state.p.b)[0]
+        else:
+            q_new = np.zeros_like(state.p.w)
+            for mi in range(len(_specs)):
+                mask = mat_id == mi
+                if not np.any(mask):
+                    continue
+                q_new[mask] = q_vabs_from_w_table(_specs[mi], state.p.w[mask], state.p.b[mask])[0]
+            state.p.q = q_new
+    hits_expected = float(np.sum(1.0 - np.exp(-dt * np.maximum(rTOT, 0.0))))
+    return state, {
+        "hits": int(np.count_nonzero(hit)),
+        "hits_expected": hits_expected,
+        "pp": int(np.count_nonzero(isPP)),
+        "pi": int(np.count_nonzero(isPI)),
+        "pb": int(np.count_nonzero(isPB)),
+    }
 
 
 def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: dict[str, Any], spec: dict[str, Any] | None = None) -> tuple[SimulationState, dict[str, Any]]:
     if len(state.p) == 0:
-        return state, {"heat_flux": empty_heat_flux_stats(mesh)}
+        return state, {
+            "heat_flux": empty_heat_flux_stats(mesh),
+            "catch_count": 0,
+            "generate_count": 0,
+            "pass_count": 0,
+            "reflect_count": 0,
+        }
     if str(get_or(opts, "fly_mode", "cell")).lower() not in {"cell", "domain"}:
         raise ValueError(f'unknown fly_mode "{opts["fly_mode"]}"')
     Nx, Ny, Nz = mesh["Nx"], mesh["Ny"], mesh["Nz"]
@@ -3633,17 +4004,24 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
     pn_ph = state.p.n_ph.copy()
     pseed = state.p.seed.copy()
     cid = state.p.cell.astype(np.int64).copy()
+    pmat = state.p.material_id.copy()
     alive = (cid >= 1) & (cid <= Nx * Ny * Nz) & (vabs > 0)
     t_rem = np.full(len(state.p), dt, dtype=np.float64)
     next_id = next_particle_id(state.p)
     cid_safe = np.clip(cid, 1, Nx * Ny * Nz)
     ix, iy, iz = ind2sub(Nx, Ny, Nz, cid_safe)
+    # Pre-fetch cell material index array for material_id updates.
+    _cell_mat_idx = np.asarray(mesh.get("cell_material_index", np.zeros(1, dtype=np.int32)), dtype=np.int32)
     if np.any(alive):
         idx = np.flatnonzero(alive)
         x[idx] = np.clip(x[idx], X[ix[idx] - 1] + epsl, X[ix[idx]] - epsl)
         y[idx] = np.clip(y[idx], Y[iy[idx] - 1] + epsl, Y[iy[idx]] - epsl)
         z[idx] = np.clip(z[idx], Z[iz[idx] - 1] + epsl, Z[iz[idx]] - epsl)
     flux = empty_heat_flux_stats(mesh)
+    catch_count = 0
+    generate_count = 0
+    pass_count = 0
+    reflect_count = 0
     while True:
         act = np.flatnonzero(alive & (t_rem > 0))
         if act.size == 0:
@@ -3702,6 +4080,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                 action = resolve_scatter_face_action(matched_rule)
             packet_E = float(pE[k]) if k < pE.size else 0.0
             if action == "pass":
+                pass_count += 1
                 tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
                 if normal == "+X":
                     if ix[k] >= Nx:
@@ -3747,7 +4126,64 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                         z[k] = Z[iz[k]] - epsl
                 if alive[k]:
                     cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+                    # --- DMM interface crossing (Phase 7) -----------------
+                    old_mat = int(pmat[k])
+                    nc = cid[k]
+                    if 1 <= nc <= _cell_mat_idx.size:
+                        new_mat = int(_cell_mat_idx[nc - 1] - 1)
+                    else:
+                        new_mat = -1
+                    dmm = mesh.get("dmm_tables", {})
+                    if dmm and old_mat >= 0 and new_mat >= 0 and old_mat != new_mat:
+                        key = (old_mat, new_mat)
+                        T_ab = dmm.get(key)
+                        if T_ab is not None:
+                            # Bin frequency to get transmission probability.
+                            # w_edges is stored on specs[0] (all materials share the same grid).
+                            w_edges_global = np.asarray(mesh.get("specs", [{}])[0].get("w_edges", np.array([0.0, 1e30])), dtype=np.float64)
+                            w_idx = np.digitize(pw[k], w_edges_global) - 1
+                            w_idx = max(0, min(w_idx, T_ab.size - 1))
+                            T_val = float(T_ab[w_idx])
+                            if np.random.random() < T_val:
+                                # Transmitted: accept new material.
+                                pmat[k] = new_mat
+                            else:
+                                # Reflected: restore old material, reverse normal velocity,
+                                # randomize direction in reflecting hemisphere, and move back.
+                                pmat[k] = old_mat
+                                if axis_ix[jj] == 1:
+                                    vx[k] = -vx[k]
+                                    x[k] = X[ix[k]] - epsl if vx[k] > 0 else X[ix[k] - 1] + epsl
+                                elif axis_ix[jj] == 2:
+                                    vy[k] = -vy[k]
+                                    y[k] = Y[iy[k]] - epsl if vy[k] > 0 else Y[iy[k] - 1] + epsl
+                                else:
+                                    vz[k] = -vz[k]
+                                    z[k] = Z[iz[k]] - epsl if vz[k] > 0 else Z[iz[k] - 1] + epsl
+                                dirs_hemi = rand_hemisphere_vec(opposite_normal(normal))
+                                vx[k] = vabs[k] * dirs_hemi[0]
+                                vy[k] = vabs[k] * dirs_hemi[1]
+                                vz[k] = vabs[k] * dirs_hemi[2]
+                                # Move back to original cell.
+                                if normal == "+X":
+                                    ix[k] = max(ix[k] - 1, 1)
+                                elif normal == "-X":
+                                    ix[k] = min(ix[k] + 1, Nx)
+                                elif normal == "+Y":
+                                    iy[k] = max(iy[k] - 1, 1)
+                                elif normal == "-Y":
+                                    iy[k] = min(iy[k] + 1, Ny)
+                                elif normal == "+Z":
+                                    iz[k] = max(iz[k] - 1, 1)
+                                else:
+                                    iz[k] = min(iz[k] + 1, Nz)
+                                cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+                        else:
+                            pmat[k] = new_mat
+                    else:
+                        pmat[k] = new_mat
             elif action == "reflect":
+                reflect_count += 1
                 if normal in {"+X", "-X"}:
                     vx[k] = -vx[k]
                     x[k] = X[ix[k]] - epsl if normal == "+X" else X[ix[k] - 1] + epsl
@@ -3758,6 +4194,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                     vz[k] = -vz[k]
                     z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
             elif action == "scatter_diffuse":
+                reflect_count += 1
                 dirs = rand_hemisphere_vec(normal)
                 vx[k] = vabs[k] * dirs[0]
                 vy[k] = vabs[k] * dirs[1]
@@ -3769,6 +4206,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                 else:
                     z[k] = Z[iz[k]] - epsl if normal == "+Z" else Z[iz[k] - 1] + epsl
             elif action == "catch":
+                catch_count += 1
                 tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
                 alive[k] = False
                 cid[k] = -1
@@ -3792,7 +4230,13 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                     iz[k] = Nz
                     z[k] = Z[-1] - epsl
                 cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+                nc = cid[k]
+                if 1 <= nc <= _cell_mat_idx.size:
+                    pmat[k] = _cell_mat_idx[nc - 1] - 1
+                else:
+                    pmat[k] = -1
             elif action == "generate":
+                generate_count += 1
                 tally_heat_flux_crossing(flux, mesh, pt, normal, packet_E)
                 has_neighbor = True
                 child_x, child_y, child_z = x[k], y[k], z[k]
@@ -3835,9 +4279,10 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                         child_z = Z[child_iz] - epsl
                 if has_neighbor:
                     next_id += 1
+                    child_cid = int(sub2ind(Nx, Ny, Nz, child_ix, child_iy, child_iz))
                     pid = np.append(pid, next_id)
                     par_id = np.append(par_id, next_id)
-                    cid = np.append(cid, sub2ind(Nx, Ny, Nz, child_ix, child_iy, child_iz))
+                    cid = np.append(cid, child_cid)
                     x = np.append(x, child_x)
                     y = np.append(y, child_y)
                     z = np.append(z, child_z)
@@ -3858,6 +4303,11 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                     ix = np.append(ix, child_ix)
                     iy = np.append(iy, child_iy)
                     iz = np.append(iz, child_iz)
+                    # Set child material_id from the destination cell.
+                    child_mat = -1
+                    if 1 <= child_cid <= _cell_mat_idx.size:
+                        child_mat = _cell_mat_idx[child_cid - 1] - 1
+                    pmat = np.append(pmat, child_mat)
                 if normal in {"+X", "-X"}:
                     vx[k] = -vx[k]
                     x[k] = X[ix[k]] - epsl if normal == "+X" else X[ix[k] - 1] + epsl
@@ -3879,6 +4329,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
         id=pid[keep],
         par_id=par_id[keep],
         cell=cid[keep].astype(np.int32),
+        material_id=pmat[keep],
         x=x[keep],
         y=y[keep],
         z=z[keep],
@@ -3896,7 +4347,13 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
         seed=pseed[keep],
         t_left=np.zeros(np.count_nonzero(keep), dtype=np.float64),
     )
-    return state, {"heat_flux": flux}
+    return state, {
+        "heat_flux": flux,
+        "catch_count": catch_count,
+        "generate_count": generate_count,
+        "pass_count": pass_count,
+        "reflect_count": reflect_count,
+    }
 
 
 def accumulate_output(output_cfg: dict[str, Any], fly_stats: dict[str, Any], dt: float) -> dict[str, Any]:
@@ -3931,7 +4388,16 @@ def reset_output_interval(output_cfg: dict[str, Any]) -> dict[str, Any]:
     return output_cfg
 
 
-def spawn_volume_sources_from_map(qvol: np.ndarray, opts: dict[str, Any], mesh: dict[str, Any], spec: dict[str, Any], state: SimulationState, Tprime: np.ndarray, lut: dict[str, Any], dt: float) -> ParticleBlock:
+def spawn_volume_sources_from_map(
+    qvol: np.ndarray,
+    opts: dict[str, Any],
+    mesh: dict[str, Any],
+    spec: dict[str, Any] | list[dict[str, Any]],
+    state: SimulationState,
+    Tprime: np.ndarray,
+    lut: dict[str, Any] | list[dict[str, Any]],
+    dt: float,
+) -> ParticleBlock:
     blocks: list[ParticleBlock] = []
     next_id = next_particle_id(state.p)
     Vc = cell_volumes(mesh)
@@ -3939,22 +4405,40 @@ def spawn_volume_sources_from_map(qvol: np.ndarray, opts: dict[str, Any], mesh: 
     residual = np.asarray(state.info.get("volume_source_residual_J", np.zeros(Nc, dtype=np.float64)), dtype=np.float64).reshape(-1)
     if residual.size != Nc:
         residual = np.zeros(Nc, dtype=np.float64)
+    # Normalise specs and LUTs.
+    if isinstance(spec, dict):
+        _specs_src: list[dict[str, Any]] = [spec]
+        _luts_src: list[dict[str, Any]] = [lut] if isinstance(lut, dict) else [lut[0]]
+    else:
+        _specs_src = list(spec)
+        _luts_src = list(lut) if isinstance(lut, list) else [lut]
+    cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(Nc, dtype=np.int32)), dtype=np.int32)
     qsrc_arr = np.asarray(qvol, dtype=np.float64).reshape(-1)
     for cid, qsrc in enumerate(qsrc_arr, start=1):
         residual[cid - 1] += float(qsrc) * float(Vc[cid - 1]) * dt
         dE_cell = float(residual[cid - 1])
-        if qsrc == 0 and abs(dE_cell) <= 0.0:
+        if qsrc > 0.0 and dE_cell <= 0.0:
             continue
+        if qsrc < 0.0 and dE_cell >= 0.0:
+            continue
+        if qsrc == 0.0 and abs(dE_cell) <= 0.0:
+            continue
+        # Dispatch to the correct material spec and LUT for this cell.
+        mi = int(cell_mat[cid - 1]) - 1
+        if mi < 0 or mi >= len(_specs_src):
+            continue  # unassigned cell
+        cell_spec = _specs_src[mi]
+        cell_lut = _luts_src[mi] if mi < len(_luts_src) else _luts_src[0]
         src = {
             "type": "volume",
             "qvol": float(qsrc),
             "dE_tot": dE_cell,
             "E_eff": state.WE,
             "region": {"type": "cells", "id": [cid]},
-            "force_positive": True,
+            "force_positive": qsrc > 0.0,
         }
         temp_state = SimulationState(p=state.p, WE=state.WE, Wp=state.Wp, Nsp_cell=state.Nsp_cell, enhance_factor=state.enhance_factor, info=state.info)
-        newp = spawn_heat_source(opts, mesh, spec, temp_state, Tprime, lut, src, dt)
+        newp = spawn_heat_source(opts, mesh, cell_spec, temp_state, Tprime, cell_lut, src, dt)
         if len(newp):
             residual[cid - 1] -= float(np.sum(newp.E))
             shift = next_id - (int(newp.id[0]) - 1)
@@ -3984,7 +4468,114 @@ def resolve_linearization_temperature(mesh: dict[str, Any], opts: dict[str, Any]
     return opts
 
 
-def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], state: SimulationState) -> tuple[np.ndarray, ParticleBlock, dict[str, Any]]:
+def precompute_dmm_tables(specs: list[dict[str, Any]]) -> dict[tuple[int, int], np.ndarray]:
+    """Precompute DMM transmission probability T_{i->j}(omega) for every ordered material pair.
+
+    Returns a dict mapping ``(mat_i, mat_j)`` → T_ij array of shape (Nw,).
+
+    Uses the projected DOS × vg formulation::
+
+        M_i(w) = DOS_i(w) · vg_i(w)
+        T_{i→j}(w) = M_j(w) / (M_i(w) + M_j(w))
+    """
+    n = len(specs)
+    tables: dict[tuple[int, int], np.ndarray] = {}
+    for i in range(n):
+        DOS_i = np.maximum(np.asarray(specs[i]["DOS_w"], dtype=np.float64), 0.0)
+        vg_i = np.maximum(np.asarray(specs[i]["vg_w"], dtype=np.float64).sum(axis=0), 0.0)
+        M_i = DOS_i * np.maximum(vg_i, 1e-30)
+        for j in range(n):
+            if i == j:
+                continue
+            DOS_j = np.maximum(np.asarray(specs[j]["DOS_w"], dtype=np.float64), 0.0)
+            vg_j = np.maximum(np.asarray(specs[j]["vg_w"], dtype=np.float64).sum(axis=0), 0.0)
+            M_j = DOS_j * np.maximum(vg_j, 1e-30)
+            denom = np.maximum(M_i + M_j, 1e-30)
+            tables[(i, j)] = (M_j / denom).astype(np.float64)
+    return tables
+
+
+def init_state_energy_multi(
+    mesh: dict[str, Any],
+    specs: list[dict[str, Any]],
+    opts: dict[str, Any],
+) -> SimulationState:
+    """Initialise particle state for a multi-material simulation.
+
+    Samples particles per material group and concatenates the blocks.
+    """
+    mode_name = str(get_or(opts, "mode", "absolute"))
+    default_T = float(opts["T_init"]) if np.isfinite(get_or(opts, "T_init", np.nan)) else float(get_or(opts, "T0", get_or(opts, "Tref", 300.0)))
+    Tcell, Tmeta = load_initial_temperature_field(mesh, opts, default_T)
+    default_Tref = float(get_or(opts, "Tref", np.nan))
+    if not np.isfinite(default_Tref):
+        default_Tref = float(np.mean(Tcell))
+    Tref_cell, Tref_meta = load_reference_temperature_field(mesh, opts, default_Tref)
+    cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(1, dtype=np.int32)), dtype=np.int32)
+    blocks: list[ParticleBlock] = []
+    total_Nexp = 0.0
+    total_Nsp = 0
+    E_eff = float(get_or(opts, "E_eff", 1e-18))
+    id_offset = 0
+    for mi, sp in enumerate(specs):
+        cell_ids = np.flatnonzero(cell_mat == (mi + 1)).astype(np.int64) + 1
+        if cell_ids.size == 0:
+            continue
+        p_blk, info = sample_particles_for_cells(
+            mesh, sp, opts, cell_ids,
+            Tcell[cell_ids - 1],
+            Tref_cell[cell_ids - 1] if mode_name.lower() == "deviational" else None,
+            id_offset,
+        )
+        if len(p_blk):
+            blocks.append(p_blk)
+            id_offset = int(p_blk.id.max())
+        total_Nexp += info["Nexp_tot"]
+        total_Nsp += info["Nsp_tot"]
+        E_eff = info.get("E_eff_used", E_eff)
+    if not blocks:
+        raise RuntimeError("No particles generated for any material region")
+    p = blocks[0]
+    for blk in blocks[1:]:
+        p = p.append(blk)
+    Nc = infer_Nc(mesh)
+    Nsp_cell = np.bincount(p.cell.astype(np.int64) - 1, minlength=Nc).astype(np.int64) if len(p) else np.zeros(Nc, dtype=np.int64)
+    Vc = cell_volumes(mesh)
+    Vdom = float(Vc.sum())
+    info_full = {
+        "mode": mode_name,
+        "Tref": float(get_or(opts, "Tref", get_or(opts, "T0", 300.0))),
+        "Tref_cell": Tref_cell,
+        "reference_temperature_meta": Tref_meta,
+        "T_init_cell": Tcell,
+        "initial_temperature_meta": Tmeta,
+        "U_density_mean": total_Nexp * E_eff / max(Vdom, REALMIN),
+        "U_total": total_Nexp * E_eff,
+        "Nexp_tot": total_Nexp,
+        "Nsp_tot": total_Nsp,
+        "E_eff_used": E_eff,
+        "fixed_target_particles": 0,
+        "Nc": Nc,
+        "Vdom": Vdom,
+    }
+    return SimulationState(
+        p=p,
+        WE=E_eff,
+        Wp=E_eff,
+        Nsp_cell=Nsp_cell,
+        enhance_factor=enhance_factor_array(opts, Nc),
+        info=info_full,
+    )
+
+
+def MC_time_loop_BTE(
+    mesh: dict[str, Any],
+    spec: dict[str, Any] | list[dict[str, Any]],
+    opts: dict[str, Any],
+    state: SimulationState,
+    luts: list[dict[str, Any]] | None = None,
+    pp_luts: list[dict[str, Any]] | None = None,
+) -> tuple[np.ndarray, ParticleBlock, dict[str, Any]]:
     Nc = infer_Nc(mesh)
     T0 = float(get_or(opts, "T0", 300.0))
     dt_min = float(get_or(opts, "dt_min", 1e-15))
@@ -4005,6 +4596,7 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
     log_on = bool(get_or(logcfg, "on", True))
     print_every = int(get_or(logcfg, "print_every", 1))
     to_file = bool(get_or(logcfg, "to_file", False))
+    tee_stdout = bool(get_or(logcfg, "tee_stdout", to_file))
     logfile = str(get_or(logcfg, "filename", "mc_log.txt"))
     if to_file and output_cfg["enabled"]:
         logfile = str(Path(output_cfg["run_dir"]) / Path(logfile).name)
@@ -4016,6 +4608,8 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
         if log_handle is None:
             print(msg, end="")
         else:
+            if tee_stdout:
+                print(msg, end="")
             log_handle.write(msg)
             log_handle.flush()
 
@@ -4062,13 +4656,28 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
     if init_rate_cdf_file:
         out["initial_scattering_rate_cdf_file"] = init_rate_cdf_file
         log(f"[init] initial total scattering rate CDF exported to {init_rate_cdf_file}\n")
-    LUT = build_E_T_lookup(spec, et_lookup_cfg_from_opts(opts))
-    PP_SCAT_LUT = build_pp_scattering_T_lookup(spec, opts, tloc_lookup_cfg_from_opts(opts))
+    # --- multi-material normalisation --------------------------------------
+    if isinstance(spec, dict):
+        _specs: list[dict[str, Any]] = [spec]
+        single_mat = True
+    else:
+        _specs = list(spec)
+        single_mat = len(_specs) == 1
+    if luts is None:
+        LUTS: list[dict[str, Any]] = [build_E_T_lookup(_specs[0], et_lookup_cfg_from_opts(opts))]
+    else:
+        LUTS = list(luts)
+    if pp_luts is None:
+        PP_SCAT_LUTS: list[dict[str, Any]] = [build_pp_scattering_T_lookup(_specs[0], opts, tloc_lookup_cfg_from_opts(opts))]
+    else:
+        PP_SCAT_LUTS = list(pp_luts)
+    LUT = LUTS[0]  # primary LUT for backward-compat single-material code paths
+    PP_SCAT_LUT = PP_SCAT_LUTS[0]
     Vc = cell_volumes(mesh)
     Toc_step = Tstar.copy()
     last_dt_info: dict[str, Any] = {}
     if reservoir_on and mesh.get("reservoirs") and refresh_at_step1:
-        state, res_info = refresh_reservoir_particles(state, mesh, spec, opts)
+        state, res_info = refresh_reservoir_particles(state, mesh, _specs[0] if single_mat else _specs, opts)
         if res_info["refreshed"]:
             Tstar[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
             Tprime[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
@@ -4084,36 +4693,37 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
             f"| q[min,mean,max]=[{qsrc_meta['q_min']:+.3e}, {qsrc_meta['q_mean']:+.3e}, {qsrc_meta['q_max']:+.3e}] "
             f"| Ptot={qsrc_meta['q_total_W']:+.3e} W\n"
         )
-    hdr = "  step |      dt[s]   |  dT_inf[K] |  dT_L2[K] |    E_net[J] |   T_min[K] |  T_mean[K] |   T_max[K] |  pscat_max |      Np\n"
-    fmt = "{step:6d} | {dt:1.4e} | {T_inf:1.4e} | {T_l2:1.4e} | {E_net:+.3e} | {Tmin:9.3f} | {Tmean:10.3f} | {Tmax:9.3f} | {pscat:10.3f} | {Np:7d}\n"
     for step in range(1, max_steps + 1):
         if reservoir_on and mesh.get("reservoirs") and step > 1 and ((step - 1) % refresh_every == 0):
-            state, res_info = refresh_reservoir_particles(state, mesh, spec, opts)
+            state, res_info = refresh_reservoir_particles(state, mesh, _specs[0] if single_mat else _specs, opts)
             if res_info["refreshed"]:
                 Tstar[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
                 Tprime[res_info["cell_ids"] - 1] = res_info["target_temperature_cell"]
                 out["reservoir_refresh_steps"].append(step)
                 log(f"[reservoir] step={step} refreshed {res_info['cell_ids'].size} cells | removed={res_info['removed_particles']} added={res_info['added_particles']}\n")
-        r_tau = precompute_relax_times(state, Tstar, opts, spec) if scatter_on else np.zeros((len(state.p), 6), dtype=np.float64)
-        dt, info_dt = step_pick_dt(mesh, spec, opts, state, r_tau)
+        r_tau = precompute_relax_times(state, Tstar, opts, _specs) if scatter_on else np.zeros((len(state.p), 6), dtype=np.float64)
+        dt, info_dt = step_pick_dt(mesh, _specs[0], opts, state, r_tau)
         last_dt_info = dict(info_dt)
         dt = min(max(dt, dt_min), dt_max)
         out["dt_hist"].append(dt)
+        newpV_count = 0
         if use_volume_map:
-            newpV = spawn_volume_sources_from_map(qvol, opts, mesh, spec, state, Tprime, LUT, dt)
+            newpV = spawn_volume_sources_from_map(qvol, opts, mesh, _specs, state, Tprime, LUTS if not single_mat else LUT, dt)
+            newpV_count = len(newpV)
             if len(newpV):
                 state.p = state.p.append(newpV)
-        state, fly_stats = particle_fly(state, mesh, dt, opts, spec)
+        state, fly_stats = particle_fly(state, mesh, dt, opts, _specs[0])
         output_cfg = accumulate_output(output_cfg, fly_stats, dt)
+        scatter_stats = {"hits": 0, "hits_expected": 0.0, "pp": 0, "pi": 0, "pb": 0}
         if scatter_on and len(state.p):
-            r_tau = precompute_relax_times(state, Tstar, opts, spec)
-            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, PP_SCAT_LUT)[0]
-            state, _ = particle_scattering(state, mesh, spec, opts, dt, Tstar, r_tau, PP_SCAT_LUT, Toc_step)
+            r_tau = precompute_relax_times(state, Tstar, opts, _specs)
+            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, _specs[0], opts, r_tau, PP_SCAT_LUT)[0]
+            state, scatter_stats = particle_scattering(state, mesh, _specs, opts, dt, Tstar, r_tau, PP_SCAT_LUT, Toc_step)
         elif scatter_on:
-            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, spec, opts, r_tau, PP_SCAT_LUT)[0]
+            Toc_step = update_pp_scattering_temperature_from_energy(state, mesh, _specs[0], opts, r_tau, PP_SCAT_LUT)[0]
         else:
             Toc_step = Tstar.copy()
-        Tprime, _ = update_temperature_from_energy(state, mesh, spec, opts, LUT)
+        Tprime, temp_aux = update_temperature_from_energy(state, mesh, _specs, opts, LUTS if not single_mat else LUT)
         E_net_total = 0.0
         U_alive_now = particles_total_energy(state, opts)
         U_cells_now = float(np.sum(np.asarray(LUT["U_interp"](np.clip(Tprime, LUT["T"][0], LUT["T"][-1])), dtype=np.float64) * Vc))
@@ -4134,12 +4744,27 @@ def MC_time_loop_BTE(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str,
         out["Temperature_hist"].append(Tprime.copy())
         out["iface_hist"].append({})
         if log_on and (step == 1 or step % print_every == 0):
-            log(hdr)
-            log(fmt.format(step=step, dt=dt, T_inf=T_inf, T_l2=T_l2, E_net=E_net_total, Tmin=float(Tprime.min()), Tmean=float(Tprime.mean()), Tmax=float(Tprime.max()), pscat=0.0 if not np.isfinite(pscat_max) else pscat_max, Np=len(state.p)))
-            log(f"   [ledger] dUc={dU_cells:+.3e}  dUa={dU_alive:+.3e}  resid={resid:+.3e}  (J)\n")
             log(
-                f"   [dt] dt={float(info_dt.get('dt', dt)):1.3e}  "
-                f"dt_cfl={float(info_dt.get('dt_cfl', np.nan)):1.3e}  "
+                f"[step {step:6d}] "
+                f"Np={len(state.p):7d} | "
+                f"T=[{temp_aux['Tmin']:.2f}, {temp_aux['Tmean']:.2f}, {temp_aux['Tmax']:.2f}] K | "
+                f"catch={int(fly_stats.get('catch_count', 0))} "
+                f"generate={int(fly_stats.get('generate_count', 0))} "
+                f"src_new={int(newpV_count)} | "
+                f"scat={int(scatter_stats.get('hits', 0))} "
+                f"(PP={int(scatter_stats.get('pp', 0))}, PI={int(scatter_stats.get('pi', 0))}, PB={int(scatter_stats.get('pb', 0))}) | "
+                f"dt={float(info_dt.get('dt', dt)):1.3e}\n"
+            )
+            if temp_aux["clip_low_count"] or temp_aux["clip_high_count"]:
+                log(
+                    f"           clip_U_to_T: low={temp_aux['clip_low_count']} "
+                    f"high={temp_aux['clip_high_count']} "
+                    f"(Tlut={temp_aux['Tlut_min']:.2f}..{temp_aux['Tlut_max']:.2f} K)\n"
+                )
+            log(
+                f"           dT_inf={T_inf:1.3e} dT_L2={T_l2:1.3e} "
+                f"dUc={dU_cells:+.3e} dUa={dU_alive:+.3e} resid={resid:+.3e} "
+                f"dt_cfl={float(info_dt.get('dt_cfl', np.nan)):1.3e} "
                 f"dt_scat={float(info_dt.get('dt_prob', np.nan)):1.3e}\n"
             )
         if output_cfg["enabled"] and (step % output_cfg["every_n_steps"] == 0):
@@ -4172,9 +4797,29 @@ def MC_solve_BTE(cs: dict[str, Any], mat: dict[str, Any], opts: dict[str, Any] |
         opts = mc_default_opts()
     np.random.seed(int(get_or(opts, "mc_seed", 20240511)))
     mesh = init_mesh_from_geom(cs)
-    if mat.get("material_library") is not None:
-        mesh["material_library"] = mat["material_library"]
+    material_library = mat.get("material_library")
+    if material_library is not None:
+        mesh["material_library"] = material_library
     opts = resolve_linearization_temperature(mesh, opts)
+    # --- multi-material setup ------------------------------------------------
+    if material_library is not None and len(material_library.get("list", [])) > 1:
+        specs = build_multimaterial_specs(material_library, opts)
+        luts = [build_E_T_lookup(s, et_lookup_cfg_from_opts(opts)) for s in specs]
+        pp_luts = [build_pp_scattering_T_lookup(s, opts, tloc_lookup_cfg_from_opts(opts)) for s in specs]
+        mesh["specs"] = specs
+        mesh["n_materials"] = len(specs)
+        print(f"[init] T0={float(opts['T0']):.2f} K | {len(specs)} materials: "
+              f"{[s['material_key'] for s in specs]} | building initial particles")
+        state = init_state_energy_multi(mesh, specs, opts)
+        print(
+            f"[init] particles={len(state.p)} | mode={state.info.get('mode', 'unknown')} "
+            f"| Eeff={float(state.WE):.3e} J"
+        )
+        # Precompute DMM tables for all material pairs.
+        dmm_tables = precompute_dmm_tables(specs)
+        mesh["dmm_tables"] = dmm_tables
+        return MC_time_loop_BTE(mesh, specs, opts, state, luts, pp_luts)
+    # --- single-material path (backward compatible) --------------------------
     spec = build_spectral_grid(mat, opts)
     print(f"[init] T0={float(opts['T0']):.2f} K | building initial particles")
     state = init_state_energy(mesh, spec, opts)
@@ -4191,7 +4836,7 @@ def run_current_case(run_tag: str | None = None, base_dir: str | Path | None = N
     if run_tag is None:
         run_tag = time.strftime("%Y%m%d_%H%M%S")
     cs = setup_case_from_ldg_lgrid(input_dir / "ldg.txt", input_dir / "lgrid.txt", length_scale=1e-6, input_length_unit="um", verbose=True)
-    mat = resolve_case_material(cs)
+    mat = resolve_case_material(cs, input_dir=input_dir)
     opts = mc_default_opts(base_dir)
     opts["viz"]["enable"] = False
     opts["log"]["on"] = True
@@ -4215,7 +4860,7 @@ def main(base_dir: str | Path | None = None) -> dict[str, Any]:
     print("*           Python Port for Codex, 2026             *")
     print("*****************************************************")
     cs = setup_case_from_ldg_lgrid(input_dir / "ldg.txt", input_dir / "lgrid.txt", length_scale=1e-6, input_length_unit="um", verbose=True)
-    mat = resolve_case_material(cs)
+    mat = resolve_case_material(cs, input_dir=input_dir)
     opts = mc_default_opts(base_dir)
     Tp, p, out = MC_solve_BTE(cs, mat, opts)
     return {"Tp": Tp, "p": p, "out": out}
@@ -4251,6 +4896,12 @@ __all__ = [
     "run_current_case",
     "sample_particles_for_cells",
     "setup_case_from_ldg_lgrid",
+    "build_multimaterial_specs",
+    "precompute_dmm_tables",
+    "init_state_energy_multi",
+    "register_material_alias",
+    "material_key",
+    "load_material",
     "spawn_heat_source",
     "step_pick_dt",
     "update_pp_scattering_temperature_from_energy",
