@@ -4091,6 +4091,8 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
     dmm_energy_transmit = 0.0
     dmm_energy_reflect = 0.0
     dmm_detail: dict[str, dict[str, int]] = {}  # "i->j" -> {attempt, transmit, reflect}
+    # Per-(pair, omega_bin) tracking for empirical transmission comparison.
+    dmm_bin_detail: dict[tuple[str, int], dict[str, int]] = {}  # (pair_str, w_bin) -> {att, T, R}
     while True:
         act = np.flatnonzero(alive & (t_rem > 0))
         if act.size == 0:
@@ -4220,12 +4222,18 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                             w_edges_global = np.asarray(mesh.get("specs", [{}])[0].get("w_edges", np.array([0.0, 1e30])), dtype=np.float64)
                             w_idx = np.digitize(pw[k], w_edges_global) - 1
                             w_idx = max(0, min(w_idx, T_ab.size - 1))
+                            # Per-bin tracking.
+                            bin_key = (pair_str, int(w_idx))
+                            if bin_key not in dmm_bin_detail:
+                                dmm_bin_detail[bin_key] = {"att": 0, "T": 0, "R": 0}
+                            dmm_bin_detail[bin_key]["att"] += 1
                             T_val = float(T_ab[w_idx])
                             if np.random.random() < T_val:
                                 # --- Transmitted ---
                                 dmm_transmit += 1
                                 dmm_energy_transmit += packet_abs
                                 dmm_detail[pair_str]["transmit"] += 1
+                                dmm_bin_detail[bin_key]["T"] += 1
                                 # Update material state from target spec:
                                 # Preserve frequency w and energy E; recompute q, vabs from
                                 # the destination material dispersion.  Clamp branch id to
@@ -4234,11 +4242,26 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                                 target_spec = mesh.get("specs", [{}])[new_mat] if new_mat < len(mesh.get("specs", [])) else {}
                                 if target_spec:
                                     B_target = int(target_spec.get("B", 1))
-                                    # Clamp branch to valid range for target material.
-                                    old_b = int(pb[k])
-                                    if old_b < 1 or old_b > B_target:
+                                    # --- Branch remapping: resample branch in target material
+                                    #     weighted by DOS_w_b * |vg_w| at this omega bin.
+                                    DOS_b_target = np.asarray(target_spec.get("DOS_w_b", np.zeros((1,1))), dtype=np.float64)
+                                    vg_b_target = np.abs(np.asarray(target_spec.get("vg_w", np.zeros((1,1))), dtype=np.float64))
+                                    Nw_tgt = DOS_b_target.shape[1]
+                                    wi = max(0, min(w_idx, Nw_tgt - 1))
+                                    branch_weights = DOS_b_target[:, wi] * np.maximum(vg_b_target[:, wi], 1e-30)
+                                    total_w = float(branch_weights.sum())
+                                    if total_w > 0:
+                                        # Sample new branch from CDF.
+                                        cdf_b = np.cumsum(branch_weights) / total_w
+                                        r = np.random.random()
+                                        new_b = int(np.searchsorted(cdf_b, r, side="right")) + 1
+                                        pb[k] = max(1, min(new_b, B_target))
+                                    else:
+                                        # Fallback: clamp old branch to valid range.
+                                        old_b = int(pb[k])
                                         pb[k] = max(1, min(old_b, B_target))
-                                    # Recompute q and vabs from target material's branch_lookups.
+                                    # Recompute q and vabs from target material's branch_lookups
+                                    # using the (possibly resampled) branch.
                                     new_q, new_vabs = q_vabs_from_w_table(target_spec, pw[k], pb[k])
                                     pq[k] = float(new_q[0]) if new_q.size else pq[k]
                                     new_v = float(new_vabs[0]) if new_vabs.size else vabs[k]
@@ -4247,7 +4270,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                                     dir_x = vx[k] / old_vabs
                                     dir_y = vy[k] / old_vabs
                                     dir_z = vz[k] / old_vabs
-                                    # Renormalise direction after clamping.
+                                    # Renormalise direction.
                                     norm_d = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)
                                     if norm_d > 0:
                                         dir_x /= norm_d; dir_y /= norm_d; dir_z /= norm_d
@@ -4260,6 +4283,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                                 dmm_reflect += 1
                                 dmm_energy_reflect += packet_abs
                                 dmm_detail[pair_str]["reflect"] += 1
+                                dmm_bin_detail[bin_key]["R"] += 1
                                 # Diffuse backscatter into original cell.
                                 # rand_hemisphere_vec(normal) returns a direction *opposite*
                                 # to the given normal, i.e. back into the original cell.
@@ -4477,6 +4501,7 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
         "dmm_energy_transmit": dmm_energy_transmit,
         "dmm_energy_reflect": dmm_energy_reflect,
         "dmm_detail": dmm_detail,
+        "dmm_bin_detail": dmm_bin_detail,
     }
 
 
@@ -4670,7 +4695,15 @@ def init_state_energy_multi(
         material_weights.append(w)
         total_energy_weight += w
     # --- Phase 2: determine global E_eff ---
-    if initial_particles_fixed > 0 and total_energy_weight > 0:
+    # Handle zero-energy-weight edge case (e.g. deviational mode at uniform T).
+    fallback_to_absolute = False
+    if total_energy_weight <= 0:
+        print("[init] total energy weight is zero (uniform T in deviational mode?), "
+              "falling back to absolute mode")
+        fallback_to_absolute = True
+        global_E_eff = float(get_or(opts, "E_eff", 1e-18))
+        use_fixed = False
+    elif initial_particles_fixed > 0:
         global_E_eff = total_energy_weight / float(initial_particles_fixed)
         use_fixed = True
     else:
@@ -4688,10 +4721,12 @@ def init_state_energy_multi(
         mat_opts = dict(opts)
         mat_opts["E_eff"] = global_E_eff
         mat_opts["initial_particles_fixed"] = 0  # we already handled the fixed count
+        if fallback_to_absolute:
+            mat_opts["mode"] = "absolute"
         p_blk, info = sample_particles_for_cells(
             mesh, sp, mat_opts, cell_ids,
             Tcell[cell_ids - 1],
-            Tref_cell[cell_ids - 1] if mode_name.lower() == "deviational" else None,
+            Tref_cell[cell_ids - 1] if mode_name.lower() == "deviational" and not fallback_to_absolute else None,
             id_offset,
         )
         if len(p_blk):
@@ -4765,6 +4800,71 @@ def _estimate_energy_weight_for_cells(
             Wbm = pref * n_cell
         total_w += float(np.sum(np.abs(Wbm))) * float(Vc[ci - 1]) * float(af[ci - 1])
     return total_w
+
+
+def _write_dmm_bin_stats(
+    output_cfg: dict[str, Any],
+    mesh: dict[str, Any],
+    dmm_bin_accum: dict[tuple[str, int], dict[str, int]],
+    log_fn,
+) -> None:
+    """Write per-(pair, omega_bin) DMM statistics and log a pair-wise summary."""
+    run_dir = Path(str(output_cfg.get("run_dir", "")))
+    if not run_dir:
+        return
+    specs = mesh.get("specs", [])
+    dmm_tables = mesh.get("dmm_tables", {})
+    w_edges = np.asarray(specs[0]["w_edges"] if specs else [0.0, 1e30], dtype=np.float64)
+    w_centers = 0.5 * (w_edges[:-1] + w_edges[1:])
+    Nw = w_centers.size
+
+    # Write per-bin CSV.
+    header = ["pair", "omega_bin", "omega_center_rad_s", "attempts", "transmit",
+              "reflect", "empirical_T", "table_T"]
+    rows: list[list] = [header]
+    pair_summary: dict[str, dict[str, float]] = {}  # pair_str -> {att, T, R, emp_T, table_T_mean}
+
+    for (pair_str, w_bin), counts in sorted(dmm_bin_accum.items()):
+        att = counts.get("att", 0)
+        tr = counts.get("T", 0)
+        rf = counts.get("R", 0)
+        emp_T = tr / max(att, 1)
+        # Look up table_T.
+        parts = pair_str.split("->")
+        table_T = np.nan
+        if len(parts) == 2:
+            try:
+                i, j = int(parts[0]), int(parts[1])
+                tbl = dmm_tables.get((i, j))
+                if tbl is not None and 0 <= w_bin < tbl.size:
+                    table_T = float(tbl[w_bin])
+            except (ValueError, IndexError):
+                pass
+        wc = w_centers[w_bin] if 0 <= w_bin < Nw else np.nan
+        rows.append([pair_str, w_bin, f"{wc:.6e}" if np.isfinite(wc) else "",
+                     att, tr, rf, f"{emp_T:.6f}", f"{table_T:.6f}" if np.isfinite(table_T) else ""])
+
+        # Aggregate into pair summary.
+        if pair_str not in pair_summary:
+            pair_summary[pair_str] = {"att": 0, "T": 0, "R": 0, "table_T_sum": 0.0, "bins": 0}
+        ps = pair_summary[pair_str]
+        ps["att"] += att
+        ps["T"] += tr
+        ps["R"] += rf
+        if np.isfinite(table_T):
+            ps["table_T_sum"] += table_T * att  # weight by attempts
+            ps["bins"] += att
+
+    write_csv_rows(run_dir / "dmm_bin_stats.txt", rows)
+
+    # Log pair-wise summary.
+    log_fn("\n[DMM bin summary]\n")
+    for pair_str in sorted(pair_summary.keys()):
+        ps = pair_summary[pair_str]
+        emp_T = ps["T"] / max(ps["att"], 1)
+        avg_table_T = ps["table_T_sum"] / max(ps["bins"], 1)
+        log_fn(f"  {pair_str}: attempts={ps['att']} transmit={ps['T']} reflect={ps['R']} "
+               f"empirical_T={emp_T:.4f} table_T_mean={avg_table_T:.4f}\n")
 
 
 def MC_time_loop_BTE(
@@ -4949,6 +5049,7 @@ def MC_time_loop_BTE(
             "dmm_energy_transmit": fly_stats.get("dmm_energy_transmit", 0.0),
             "dmm_energy_reflect": fly_stats.get("dmm_energy_reflect", 0.0),
             "dmm_detail": fly_stats.get("dmm_detail", {}),
+            "dmm_bin_detail": fly_stats.get("dmm_bin_detail", {}),
         })
         if log_on and (step == 1 or step % print_every == 0):
             log(
@@ -4990,13 +5091,26 @@ def MC_time_loop_BTE(
             out["converged"] = True
             log(f"[{time.strftime('%H:%M:%S')}] Converged at step {step}: dT_inf={T_inf:1.3e}, dT_L2={T_l2:1.3e}, E_net={E_net_total:+.3e}\n")
             break
+    # --- accumulate DMM bin stats across all steps ---
+    dmm_bin_accum: dict[tuple[str, int], dict[str, int]] = {}
+    for h in out.get("iface_hist", []):
+        for (pair_str, w_bin), counts in h.get("dmm_bin_detail", {}).items():
+            key = (pair_str, w_bin)
+            if key not in dmm_bin_accum:
+                dmm_bin_accum[key] = {"att": 0, "T": 0, "R": 0}
+            for kk in ("att", "T", "R"):
+                dmm_bin_accum[key][kk] += counts.get(kk, 0)
     if output_cfg["enabled"]:
         if output_cfg["interval_time"] > 0 and out["nsteps"] > 0:
             write_periodic_output(output_cfg, mesh, spec, state, Tprime, Toc_step, opts, last_dt_info, out["nsteps"], output_cfg["cum_time"], out["dt_hist"][-1])
+        # --- write DMM bin stats ---
+        if dmm_bin_accum:
+            _write_dmm_bin_stats(output_cfg, mesh, dmm_bin_accum, log)
         out["output_dir"] = output_cfg["run_dir"]
         out["output_steps_dir"] = output_cfg["steps_dir"]
         out["step_history_file"] = output_cfg["step_history_file"]
         out["heat_flux_monitor_warnings"] = output_cfg["monitor_warnings"]
+    out["dmm_bin_accum"] = dmm_bin_accum  # make accessible for test scripts
     if log_handle is not None:
         log_handle.close()
     return Tprime, state.p, out
