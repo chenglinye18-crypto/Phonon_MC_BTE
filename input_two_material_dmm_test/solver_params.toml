@@ -1,0 +1,47 @@
+E_eff = 1.0e-18
+initial_particles_fixed = 5000
+dt = 0.0
+dt_min = 1.0e-16
+dt_max = 1.0e-11
+p_target = 0.1
+max_steps = 20
+ET_table_T_min = 290
+ET_table_T_max = 360
+ET_table_nT = 501
+Tloc_table_T_min = 290
+Tloc_table_T_max = 360
+Tloc_table_nT = 501
+
+[output]
+every_n_steps = 10
+
+[reservoir]
+refresh_every_n_steps = 10
+refresh_at_step1 = true
+
+# Per-material scattering parameters
+[scattering.SILICON]
+BL = 1.18e-24
+BTN = 1.05e-12
+BTU = 2.89e-18
+tau_LTO_ps = 3.5
+A_imp = 1.32e-45
+B_imp = 0.0
+C_imp = 0.0
+PB_Tsi = 0
+PB_bulk_L = 0
+PB_bulk_F = 0
+PB_Delta = 0
+
+[scattering.IGZO]
+BL = 3.0e-22
+BTN = 1.007613738034e-12
+BTU = 4.999999999728e-15
+tau_LTO_ps = 3.5
+A_imp = 1.0e-46
+B_imp = 3.0e-22
+C_imp = 1.0e9
+PB_Tsi = 0
+PB_bulk_L = 0
+PB_bulk_F = 0
+PB_Delta = 1.041257005225e-12

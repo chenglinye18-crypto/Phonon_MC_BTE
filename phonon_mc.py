@@ -2440,13 +2440,22 @@ def pp_only_rate_for_particles(
 def update_pp_scattering_temperature_from_energy(
     state: SimulationState,
     mesh: dict[str, Any],
-    spec: dict[str, Any],
+    spec: dict[str, Any] | list[dict[str, Any]],
     opts: dict[str, Any],
     r_tau: np.ndarray,
-    lut: dict[str, Any] | None = None,
+    lut: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
+    # --- normalise specs and LUTs ---
+    if isinstance(spec, dict):
+        _specs_pp: list[dict[str, Any]] = [spec]
+    else:
+        _specs_pp = list(spec)
     if lut is None:
-        lut = build_pp_scattering_T_lookup(spec, opts, tloc_lookup_cfg_from_opts(opts))
+        _luts_pp: list[dict[str, Any]] = [build_pp_scattering_T_lookup(_specs_pp[0], opts, tloc_lookup_cfg_from_opts(opts))]
+    elif isinstance(lut, dict):
+        _luts_pp = [lut]
+    else:
+        _luts_pp = list(lut)
     Vc = cell_volumes(mesh)
     Nc = Vc.size
     if len(state.p) == 0:
@@ -2462,25 +2471,47 @@ def update_pp_scattering_temperature_from_energy(
     Slocal = np.zeros(Nc, dtype=np.float64)
     mask = Vc > 0
     Slocal[mask] = S_cell[mask] / Vc[mask]
+    # --- per-material temperature inversion ---
+    cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(Nc, dtype=np.int32)), dtype=np.int32)
+    Tnew = np.zeros(Nc, dtype=np.float64)
+    single = len(_luts_pp) == 1
     if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
         Tref_cell = reference_temperature_from_state(state, opts, Nc)
-        Tref_clamped = np.clip(Tref_cell, lut["T"][0], lut["T"][-1])
-        Sref = np.asarray(lut["S_interp"](Tref_clamped), dtype=np.float64)
-        Sabs = Slocal + Sref
     else:
-        Sabs = Slocal
-    Smin, Smax = float(lut["S_mono"][0]), float(lut["S_mono"][-1])
-    Scl = np.clip(Sabs, Smin, Smax)
-    Tnew = np.asarray(lut["inv_interp"](Scl), dtype=np.float64)
+        Tref_cell = np.zeros(Nc, dtype=np.float64)
+    for mi, lu in enumerate(_luts_pp):
+        cell_mask = (cell_mat == (mi + 1)) if not single else mask
+        if not np.any(cell_mask):
+            continue
+        Sl = Slocal[cell_mask]
+        if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+            Tref_clamped = np.clip(Tref_cell[cell_mask], lu["T"][0], lu["T"][-1])
+            Sref = np.asarray(lu["S_interp"](Tref_clamped), dtype=np.float64)
+            Sabs = Sl + Sref
+        else:
+            Sabs = Sl
+        Smin, Smax = float(lu["S_mono"][0]), float(lu["S_mono"][-1])
+        Scl = np.clip(Sabs, Smin, Smax)
+        Tnew[cell_mask] = np.asarray(lu["inv_interp"](Scl), dtype=np.float64)
     aux = {
         "S_cell": S_cell,
         "Vcell": Vc,
         "Slocal": Slocal,
-        "Sabs": Sabs,
-        "clip_low": float(np.mean(Sabs < Smin)),
-        "clip_high": float(np.mean(Sabs > Smax)),
-        "LUT": lut,
+        "Sabs": Slocal.copy(),
+        "clip_low": 0.0,
+        "clip_high": 0.0,
+        "LUT": _luts_pp[0],
     }
+    # Recompute Sabs for the aux dict (per-material dispatch).
+    Sabs_aux = Slocal.copy()
+    if str(get_or(opts, "mode", "absolute")).lower() == "deviational":
+        for mi, lu in enumerate(_luts_pp):
+            cell_mask = (cell_mat == (mi + 1)) if not single else mask
+            if not np.any(cell_mask):
+                continue
+            Tref = np.clip(Tref_cell[cell_mask], lu["T"][0], lu["T"][-1])
+            Sabs_aux[cell_mask] = Slocal[cell_mask] + np.asarray(lu["S_interp"](Tref), dtype=np.float64)
+    aux["Sabs"] = Sabs_aux
     return Tnew, aux
 
 
@@ -2936,16 +2967,38 @@ def write_periodic_output(
     if Toc is not None:
         toc_data = np.column_stack((I.ravel(order="F"), J.ravel(order="F"), K.ravel(order="F"), np.asarray(Toc, dtype=np.float64).reshape(-1)))
         write_csv_rows(Path(out_cfg["toc_dir"]) / f"step_{step:05d}.txt", [["idxcell", "idycell", "idzcell", "Toc"], *toc_data.tolist()])
-    branch_rows = [["branch_id", "branch_name", "superparticle_count", "phonon_count_net", "phonon_count_abs", "energy_net_J", "energy_abs_J"]]
+    # --- branch stats (supports both single-material dict and multi-material list) ---
+    if isinstance(spec, dict):
+        _specs_out = [spec]
+    else:
+        _specs_out = list(spec)
+    multi_out = len(_specs_out) > 1
+    header = ["material_id", "material_key", "branch_id", "branch_name",
+              "superparticle_count", "phonon_count_net", "phonon_count_abs",
+              "energy_net_J", "energy_abs_J"]
+    branch_rows: list[list[Any]] = [header]
     if len(state.p) == 0:
-        for ib, name in enumerate(spec["branches"], start=1):
-            branch_rows.append([ib, name, 0, 0, 0, 0, 0])
+        for mi, sp in enumerate(_specs_out):
+            mat_key = sp.get("material_key", f"mat_{mi}")
+            for ib, name in enumerate(sp["branches"], start=1):
+                branch_rows.append([mi, mat_key, ib, name, 0, 0, 0, 0, 0])
     else:
         n_net = state.p.E / (HBAR * np.maximum(state.p.w, 1e-30))
         n_abs = np.abs(state.p.E) / (HBAR * np.maximum(state.p.w, 1e-30))
-        for ib, name in enumerate(spec["branches"], start=1):
-            mask = state.p.b == ib
-            branch_rows.append([ib, name, int(np.count_nonzero(mask)), float(n_net[mask].sum()), float(n_abs[mask].sum()), float(state.p.E[mask].sum()), float(np.abs(state.p.E[mask]).sum())])
+        mat_id_arr = state.p.material_id
+        for mi, sp in enumerate(_specs_out):
+            mat_key = sp.get("material_key", f"mat_{mi}")
+            mat_mask = mat_id_arr == mi
+            for ib, name in enumerate(sp["branches"], start=1):
+                mask = mat_mask & (state.p.b == ib)
+                branch_rows.append([
+                    mi, mat_key, ib, name,
+                    int(np.count_nonzero(mask)),
+                    float(n_net[mask].sum()),
+                    float(n_abs[mask].sum()),
+                    float(state.p.E[mask].sum()),
+                    float(np.abs(state.p.E[mask]).sum()),
+                ])
     write_csv_rows(step_dir / "branch_stats.txt", branch_rows)
 
     def flux_from_energy(energy_value: float, area_value: float, time_value: float) -> float:
@@ -3707,7 +3760,7 @@ def precompute_relax_times(
     )
 
 
-def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any], state: SimulationState, rates_mat: np.ndarray | None) -> tuple[float, dict[str, Any]]:
+def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any] | list[dict[str, Any]], opts: dict[str, Any], state: SimulationState, rates_mat: np.ndarray | None) -> tuple[float, dict[str, Any]]:
     dt_min = float(get_or(opts, "dt_min", 1e-15))
     dt_max = float(get_or(opts, "dt_max", 1e-10))
     dt_fixed = float(get_or(opts, "dt", 0.0))
@@ -3715,9 +3768,17 @@ def step_pick_dt(mesh: dict[str, Any], spec: dict[str, Any], opts: dict[str, Any
     p_target = float(get_or(opts, "p_target", 0.01))
     mode = str(get_or(opts, "dt_prob_mode", "max")).lower()
     pctl = float(get_or(opts, "dt_prob_pctl", 95.0))
-    vg_max = float(max(1e-9, get_or(spec, "vg_max", 0.0)))
-    if vg_max <= 1e-9 and len(state.p):
-        vg_max = float(max(1e-9, state.p.vabs.max()))
+    # --- vg_max for CFL: use max across all materials (or current particles) ---
+    if isinstance(spec, dict):
+        _specs_dt = [spec]
+    else:
+        _specs_dt = list(spec)
+    vg_max = 1e-9
+    for sp in _specs_dt:
+        vg_max = max(vg_max, float(get_or(sp, "vg_max", 0.0)))
+    vg_max = max(vg_max, 1e-9)
+    if len(state.p):
+        vg_max = max(vg_max, float(state.p.vabs.max()))
     hmin = float(get_or(mesh, "hmin", 1.0))
     dt_cfl = cfl_safe * hmin / vg_max
     r_stat = 0.0
@@ -4022,6 +4083,14 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
     generate_count = 0
     pass_count = 0
     reflect_count = 0
+    # DMM interface statistics.
+    dmm_attempt = 0
+    dmm_transmit = 0
+    dmm_reflect = 0
+    dmm_energy_attempt = 0.0
+    dmm_energy_transmit = 0.0
+    dmm_energy_reflect = 0.0
+    dmm_detail: dict[str, dict[str, int]] = {}  # "i->j" -> {attempt, transmit, reflect}
     while True:
         act = np.flatnonzero(alive & (t_rem > 0))
         if act.size == 0:
@@ -4138,6 +4207,14 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                         key = (old_mat, new_mat)
                         T_ab = dmm.get(key)
                         if T_ab is not None:
+                            # --- DMM attempt ---
+                            dmm_attempt += 1
+                            packet_abs = abs(packet_E)
+                            dmm_energy_attempt += packet_abs
+                            pair_str = f"{old_mat}->{new_mat}"
+                            if pair_str not in dmm_detail:
+                                dmm_detail[pair_str] = {"attempt": 0, "transmit": 0, "reflect": 0}
+                            dmm_detail[pair_str]["attempt"] += 1
                             # Bin frequency to get transmission probability.
                             # w_edges is stored on specs[0] (all materials share the same grid).
                             w_edges_global = np.asarray(mesh.get("specs", [{}])[0].get("w_edges", np.array([0.0, 1e30])), dtype=np.float64)
@@ -4145,39 +4222,78 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
                             w_idx = max(0, min(w_idx, T_ab.size - 1))
                             T_val = float(T_ab[w_idx])
                             if np.random.random() < T_val:
-                                # Transmitted: accept new material.
+                                # --- Transmitted ---
+                                dmm_transmit += 1
+                                dmm_energy_transmit += packet_abs
+                                dmm_detail[pair_str]["transmit"] += 1
+                                # Update material state from target spec:
+                                # Preserve frequency w and energy E; recompute q, vabs from
+                                # the destination material dispersion.  Clamp branch id to
+                                # the target material's valid range (safe fallback).
                                 pmat[k] = new_mat
+                                target_spec = mesh.get("specs", [{}])[new_mat] if new_mat < len(mesh.get("specs", [])) else {}
+                                if target_spec:
+                                    B_target = int(target_spec.get("B", 1))
+                                    # Clamp branch to valid range for target material.
+                                    old_b = int(pb[k])
+                                    if old_b < 1 or old_b > B_target:
+                                        pb[k] = max(1, min(old_b, B_target))
+                                    # Recompute q and vabs from target material's branch_lookups.
+                                    new_q, new_vabs = q_vabs_from_w_table(target_spec, pw[k], pb[k])
+                                    pq[k] = float(new_q[0]) if new_q.size else pq[k]
+                                    new_v = float(new_vabs[0]) if new_vabs.size else vabs[k]
+                                    # Keep direction unit vector; update speed.
+                                    old_vabs = max(vabs[k], 1e-30)
+                                    dir_x = vx[k] / old_vabs
+                                    dir_y = vy[k] / old_vabs
+                                    dir_z = vz[k] / old_vabs
+                                    # Renormalise direction after clamping.
+                                    norm_d = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)
+                                    if norm_d > 0:
+                                        dir_x /= norm_d; dir_y /= norm_d; dir_z /= norm_d
+                                    vabs[k] = new_v
+                                    vx[k] = new_v * dir_x
+                                    vy[k] = new_v * dir_y
+                                    vz[k] = new_v * dir_z
                             else:
-                                # Reflected: restore old material, reverse normal velocity,
-                                # randomize direction in reflecting hemisphere, and move back.
+                                # --- Reflected ---
+                                dmm_reflect += 1
+                                dmm_energy_reflect += packet_abs
+                                dmm_detail[pair_str]["reflect"] += 1
+                                # Diffuse backscatter into original cell.
+                                # rand_hemisphere_vec(normal) returns a direction *opposite*
+                                # to the given normal, i.e. back into the original cell.
                                 pmat[k] = old_mat
-                                if axis_ix[jj] == 1:
-                                    vx[k] = -vx[k]
-                                    x[k] = X[ix[k]] - epsl if vx[k] > 0 else X[ix[k] - 1] + epsl
-                                elif axis_ix[jj] == 2:
-                                    vy[k] = -vy[k]
-                                    y[k] = Y[iy[k]] - epsl if vy[k] > 0 else Y[iy[k] - 1] + epsl
-                                else:
-                                    vz[k] = -vz[k]
-                                    z[k] = Z[iz[k]] - epsl if vz[k] > 0 else Z[iz[k] - 1] + epsl
-                                dirs_hemi = rand_hemisphere_vec(opposite_normal(normal))
+                                dirs_hemi = rand_hemisphere_vec(normal)
                                 vx[k] = vabs[k] * dirs_hemi[0]
                                 vy[k] = vabs[k] * dirs_hemi[1]
                                 vz[k] = vabs[k] * dirs_hemi[2]
-                                # Move back to original cell.
+                                # Move back to original cell (the one we came from).
                                 if normal == "+X":
                                     ix[k] = max(ix[k] - 1, 1)
+                                    x[k] = X[ix[k]] - epsl
                                 elif normal == "-X":
                                     ix[k] = min(ix[k] + 1, Nx)
+                                    x[k] = X[ix[k] - 1] + epsl
                                 elif normal == "+Y":
                                     iy[k] = max(iy[k] - 1, 1)
+                                    y[k] = Y[iy[k]] - epsl
                                 elif normal == "-Y":
                                     iy[k] = min(iy[k] + 1, Ny)
+                                    y[k] = Y[iy[k] - 1] + epsl
                                 elif normal == "+Z":
                                     iz[k] = max(iz[k] - 1, 1)
-                                else:
+                                    z[k] = Z[iz[k]] - epsl
+                                else:  # "-Z"
                                     iz[k] = min(iz[k] + 1, Nz)
+                                    z[k] = Z[iz[k] - 1] + epsl
                                 cid[k] = int(sub2ind(Nx, Ny, Nz, ix[k], iy[k], iz[k]))
+                                # Restore material_id from the original cell.
+                                nc_ref = cid[k]
+                                if 1 <= nc_ref <= _cell_mat_idx.size:
+                                    pmat[k] = _cell_mat_idx[nc_ref - 1] - 1
+                                else:
+                                    pmat[k] = old_mat
                         else:
                             pmat[k] = new_mat
                     else:
@@ -4353,6 +4469,14 @@ def particle_fly(state: SimulationState, mesh: dict[str, Any], dt: float, opts: 
         "generate_count": generate_count,
         "pass_count": pass_count,
         "reflect_count": reflect_count,
+        # DMM interface stats
+        "dmm_attempt": dmm_attempt,
+        "dmm_transmit": dmm_transmit,
+        "dmm_reflect": dmm_reflect,
+        "dmm_energy_attempt": dmm_energy_attempt,
+        "dmm_energy_transmit": dmm_energy_transmit,
+        "dmm_energy_reflect": dmm_energy_reflect,
+        "dmm_detail": dmm_detail,
     }
 
 
@@ -4473,25 +4597,37 @@ def precompute_dmm_tables(specs: list[dict[str, Any]]) -> dict[tuple[int, int], 
 
     Returns a dict mapping ``(mat_i, mat_j)`` → T_ij array of shape (Nw,).
 
-    Uses the projected DOS × vg formulation::
+    Uses the branch-resolved projected DOS × |vg| formulation::
 
-        M_i(w) = DOS_i(w) · vg_i(w)
+        M_i(w) = sum_b DOS_{i,b}(w) * |vg_{i,b}(w)|
         T_{i→j}(w) = M_j(w) / (M_i(w) + M_j(w))
+
+    Transmission probability is clamped to [0, 1]; invalid bins (zero denominator)
+    default to T = 0.5 (equal-probability fallback).
     """
     n = len(specs)
     tables: dict[tuple[int, int], np.ndarray] = {}
+    # Precompute M(w) for every material once.
+    M_list: list[np.ndarray] = []
     for i in range(n):
-        DOS_i = np.maximum(np.asarray(specs[i]["DOS_w"], dtype=np.float64), 0.0)
-        vg_i = np.maximum(np.asarray(specs[i]["vg_w"], dtype=np.float64).sum(axis=0), 0.0)
-        M_i = DOS_i * np.maximum(vg_i, 1e-30)
+        DOS_b = np.maximum(np.asarray(specs[i]["DOS_w_b"], dtype=np.float64), 0.0)   # (B, Nw)
+        vg_b = np.abs(np.asarray(specs[i]["vg_w"], dtype=np.float64))                 # (B, Nw)
+        M_b = DOS_b * np.maximum(vg_b, 1e-30)  # branch-wise
+        M_list.append(M_b.sum(axis=0))          # sum over branches → (Nw,)
+    for i in range(n):
+        M_i = M_list[i]
         for j in range(n):
             if i == j:
                 continue
-            DOS_j = np.maximum(np.asarray(specs[j]["DOS_w"], dtype=np.float64), 0.0)
-            vg_j = np.maximum(np.asarray(specs[j]["vg_w"], dtype=np.float64).sum(axis=0), 0.0)
-            M_j = DOS_j * np.maximum(vg_j, 1e-30)
+            M_j = M_list[j]
             denom = np.maximum(M_i + M_j, 1e-30)
-            tables[(i, j)] = (M_j / denom).astype(np.float64)
+            T = M_j / denom
+            # Clamp to physically valid range.
+            T = np.clip(T, 0.0, 1.0)
+            # For bins where both materials have zero DOS, use equal probability.
+            zero_mask = (M_i == 0.0) & (M_j == 0.0)
+            T[zero_mask] = 0.5
+            tables[(i, j)] = T.astype(np.float64)
     return tables
 
 
@@ -4503,8 +4639,12 @@ def init_state_energy_multi(
     """Initialise particle state for a multi-material simulation.
 
     Samples particles per material group and concatenates the blocks.
+    When ``initial_particles_fixed > 0`` a global E_eff is computed from the
+    total energy weight across *all* materials, then each material samples
+    proportionally.
     """
     mode_name = str(get_or(opts, "mode", "absolute"))
+    initial_particles_fixed = max(0, int(get_or(opts, "initial_particles_fixed", 0)))
     default_T = float(opts["T_init"]) if np.isfinite(get_or(opts, "T_init", np.nan)) else float(get_or(opts, "T0", get_or(opts, "Tref", 300.0)))
     Tcell, Tmeta = load_initial_temperature_field(mesh, opts, default_T)
     default_Tref = float(get_or(opts, "Tref", np.nan))
@@ -4512,17 +4652,44 @@ def init_state_energy_multi(
         default_Tref = float(np.mean(Tcell))
     Tref_cell, Tref_meta = load_reference_temperature_field(mesh, opts, default_Tref)
     cell_mat = np.asarray(mesh.get("cell_material_index", np.ones(1, dtype=np.int32)), dtype=np.int32)
+    # --- Phase 1: estimate total energy weight across all materials ---
+    # We do a dry-run weight calculation to compute a global E_eff when
+    # initial_particles_fixed is requested.
+    Vc = cell_volumes(mesh)
+    af = enhance_factor_array(opts, Vc.size)
+    total_energy_weight = 0.0
+    material_weights: list[float] = []
+    material_cell_ids: list[np.ndarray] = []
+    for mi, sp in enumerate(specs):
+        cell_ids = np.flatnonzero(cell_mat == (mi + 1)).astype(np.int64) + 1
+        material_cell_ids.append(cell_ids)
+        if cell_ids.size == 0:
+            material_weights.append(0.0)
+            continue
+        w = _estimate_energy_weight_for_cells(mesh, sp, opts, cell_ids, Tcell, Tref_cell, mode_name)
+        material_weights.append(w)
+        total_energy_weight += w
+    # --- Phase 2: determine global E_eff ---
+    if initial_particles_fixed > 0 and total_energy_weight > 0:
+        global_E_eff = total_energy_weight / float(initial_particles_fixed)
+        use_fixed = True
+    else:
+        global_E_eff = float(get_or(opts, "E_eff", 1e-18))
+        use_fixed = False
+    # --- Phase 3: sample each material ---
     blocks: list[ParticleBlock] = []
     total_Nexp = 0.0
     total_Nsp = 0
-    E_eff = float(get_or(opts, "E_eff", 1e-18))
     id_offset = 0
     for mi, sp in enumerate(specs):
-        cell_ids = np.flatnonzero(cell_mat == (mi + 1)).astype(np.int64) + 1
+        cell_ids = material_cell_ids[mi]
         if cell_ids.size == 0:
             continue
+        mat_opts = dict(opts)
+        mat_opts["E_eff"] = global_E_eff
+        mat_opts["initial_particles_fixed"] = 0  # we already handled the fixed count
         p_blk, info = sample_particles_for_cells(
-            mesh, sp, opts, cell_ids,
+            mesh, sp, mat_opts, cell_ids,
             Tcell[cell_ids - 1],
             Tref_cell[cell_ids - 1] if mode_name.lower() == "deviational" else None,
             id_offset,
@@ -4532,7 +4699,7 @@ def init_state_energy_multi(
             id_offset = int(p_blk.id.max())
         total_Nexp += info["Nexp_tot"]
         total_Nsp += info["Nsp_tot"]
-        E_eff = info.get("E_eff_used", E_eff)
+    E_eff_used = global_E_eff
     if not blocks:
         raise RuntimeError("No particles generated for any material region")
     p = blocks[0]
@@ -4540,7 +4707,6 @@ def init_state_energy_multi(
         p = p.append(blk)
     Nc = infer_Nc(mesh)
     Nsp_cell = np.bincount(p.cell.astype(np.int64) - 1, minlength=Nc).astype(np.int64) if len(p) else np.zeros(Nc, dtype=np.int64)
-    Vc = cell_volumes(mesh)
     Vdom = float(Vc.sum())
     info_full = {
         "mode": mode_name,
@@ -4549,23 +4715,56 @@ def init_state_energy_multi(
         "reference_temperature_meta": Tref_meta,
         "T_init_cell": Tcell,
         "initial_temperature_meta": Tmeta,
-        "U_density_mean": total_Nexp * E_eff / max(Vdom, REALMIN),
-        "U_total": total_Nexp * E_eff,
+        "U_density_mean": total_Nexp * E_eff_used / max(Vdom, REALMIN),
+        "U_total": total_Nexp * E_eff_used,
         "Nexp_tot": total_Nexp,
         "Nsp_tot": total_Nsp,
-        "E_eff_used": E_eff,
-        "fixed_target_particles": 0,
+        "E_eff_used": E_eff_used,
+        "fixed_target_particles": initial_particles_fixed if use_fixed else 0,
         "Nc": Nc,
         "Vdom": Vdom,
     }
     return SimulationState(
         p=p,
-        WE=E_eff,
-        Wp=E_eff,
+        WE=E_eff_used,
+        Wp=E_eff_used,
         Nsp_cell=Nsp_cell,
-        enhance_factor=enhance_factor_array(opts, Nc),
+        enhance_factor=af,
         info=info_full,
     )
+
+
+def _estimate_energy_weight_for_cells(
+    mesh: dict[str, Any],
+    spec: dict[str, Any],
+    opts: dict[str, Any],
+    cell_ids: np.ndarray,
+    Tcell: np.ndarray,
+    Tref_cell: np.ndarray,
+    mode_name: str,
+) -> float:
+    """Return the total absolute-mode energy |E| of the equilibrium phonon
+    distribution in the given cells (dry-run, no particles created)."""
+    cell_ids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
+    if cell_ids.size == 0:
+        return 0.0
+    Vc = cell_volumes(mesh)
+    af = enhance_factor_array(opts, Vc.size)
+    B, Nw = spec["w_mid"].shape
+    dw = ensure_2d_dw(spec)
+    pref = HBAR * np.asarray(spec["w_mid"], dtype=np.float64) * np.maximum(np.asarray(spec["DOS_w_b"], dtype=np.float64), 0.0) * dw
+    total_w = 0.0
+    for ci in cell_ids:
+        Tc = float(max(Tcell[ci - 1], 1e-12))
+        n_cell = bose_occupation(spec["w_mid"], Tc)
+        if mode_name.lower() == "deviational":
+            Tr = float(max(Tref_cell[ci - 1], 1e-12))
+            n_ref = bose_occupation(spec["w_mid"], Tr)
+            Wbm = pref * (n_cell - n_ref)
+        else:
+            Wbm = pref * n_cell
+        total_w += float(np.sum(np.abs(Wbm))) * float(Vc[ci - 1]) * float(af[ci - 1])
+    return total_w
 
 
 def MC_time_loop_BTE(
@@ -4742,7 +4941,15 @@ def MC_time_loop_BTE(
         out["T_l2_hist"].append(T_l2)
         out["pscat_max_hist"].append(pscat_max)
         out["Temperature_hist"].append(Tprime.copy())
-        out["iface_hist"].append({})
+        out["iface_hist"].append({
+            "dmm_attempt": fly_stats.get("dmm_attempt", 0),
+            "dmm_transmit": fly_stats.get("dmm_transmit", 0),
+            "dmm_reflect": fly_stats.get("dmm_reflect", 0),
+            "dmm_energy_attempt": fly_stats.get("dmm_energy_attempt", 0.0),
+            "dmm_energy_transmit": fly_stats.get("dmm_energy_transmit", 0.0),
+            "dmm_energy_reflect": fly_stats.get("dmm_energy_reflect", 0.0),
+            "dmm_detail": fly_stats.get("dmm_detail", {}),
+        })
         if log_on and (step == 1 or step % print_every == 0):
             log(
                 f"[step {step:6d}] "
@@ -4753,6 +4960,9 @@ def MC_time_loop_BTE(
                 f"src_new={int(newpV_count)} | "
                 f"scat={int(scatter_stats.get('hits', 0))} "
                 f"(PP={int(scatter_stats.get('pp', 0))}, PI={int(scatter_stats.get('pi', 0))}, PB={int(scatter_stats.get('pb', 0))}) | "
+                f"dmm=[att={int(fly_stats.get('dmm_attempt', 0))} "
+                f"T={int(fly_stats.get('dmm_transmit', 0))} "
+                f"R={int(fly_stats.get('dmm_reflect', 0))}] | "
                 f"dt={float(info_dt.get('dt', dt)):1.3e}\n"
             )
             if temp_aux["clip_low_count"] or temp_aux["clip_high_count"]:

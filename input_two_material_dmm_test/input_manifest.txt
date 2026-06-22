@@ -1,0 +1,5 @@
+description=Two-material DMM smoke test: Si (left half) + IGZO (right half)
+geometry=1D-like slab, 60nm x 60nm x 60nm
+mesh=4x4x2=32 cells
+materials=Si, IGZO
+temperature_gradient=300-330 K along Y
