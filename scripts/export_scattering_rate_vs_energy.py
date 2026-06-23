@@ -125,14 +125,14 @@ def resolve_output_dir(output_dir: str) -> Path:
 def resolve_material_entries(input_dir: Path, material_filters: list[str]) -> list[dict[str, object]]:
     ldg_file, lgrid_file = resolve_case_files(input_dir)
     cs = setup_case_from_ldg_lgrid(ldg_file, lgrid_file, length_scale=1e-6, input_length_unit="um", verbose=False)
-    entries = list(resolve_case_materials(cs)["list"])
+    entries = list(resolve_case_materials(cs, input_dir=str(input_dir))["list"])
     if not material_filters:
         return entries
     wanted = {material_key(name) for name in material_filters}
     selected = [entry for entry in entries if entry["key"] in wanted]
     missing = sorted(wanted - {entry["key"] for entry in selected})
     for key in missing:
-        selected.append({"name": key, "key": key, "mat": load_material(key, key)})
+        selected.append({"name": key, "key": key, "mat": load_material(key, key, input_dir=str(input_dir))})
     return selected
 
 
@@ -142,14 +142,37 @@ def build_opts(input_dir: Path, temperature: float) -> dict[str, object]:
     return opts
 
 
-def branch_rates(spec: dict[str, object], opts: dict[str, object], temperature: float, cos_beta: float) -> dict[str, np.ndarray]:
+def _resolve_scat_param(opts: dict[str, object], material_key_name: str, param_name: str, default: float) -> float:
+    """Resolve a scattering parameter for a specific material.
+
+    Priority: opts['material_scattering'][key][param] → opts[param] → default.
+    """
+    mat_scat = opts.get("material_scattering", {})
+    if material_key_name and material_key_name in mat_scat and param_name in mat_scat[material_key_name]:
+        return float(mat_scat[material_key_name][param_name])
+    return float(opts.get(param_name, default))
+
+
+def branch_rates(
+    spec: dict[str, object],
+    opts: dict[str, object],
+    temperature: float,
+    cos_beta: float,
+    material_key_name: str = "",
+) -> dict[str, np.ndarray]:
+    """Compute per-branch scattering rates for a given material at temperature T.
+
+    When *material_key_name* is provided and ``opts['material_scattering']``
+    contains per-material entries, those parameters take precedence over the
+    global scattering keys.
+    """
     w = np.maximum(np.asarray(spec["w_mid"], dtype=np.float64), 0.0)
     B, Nw = w.shape
     q = np.zeros_like(w)
     vabs = np.zeros_like(w)
     for ib in range(B):
-        b = np.full(Nw, ib + 1, dtype=np.int64)
-        q[ib], vabs[ib] = q_vabs_from_w_table(spec, w[ib], b)
+        b_arr = np.full(Nw, ib + 1, dtype=np.int64)
+        q[ib], vabs[ib] = q_vabs_from_w_table(spec, w[ib], b_arr)
     T = max(float(temperature), 1e-6)
     x = HBAR * w / (K_B * T)
     sinh_x = np.sinh(np.minimum(x, 10000.0))
@@ -166,31 +189,37 @@ def branch_rates(spec: dict[str, object], opts: dict[str, object], temperature: 
     ta_mask = np.asarray(spec["branch_is_ta"], dtype=bool).reshape(-1, 1)
     loto_mask = np.asarray(spec["branch_is_loto"], dtype=bool).reshape(-1, 1)
 
-    if np.any(la_mask):
-        rate_la = np.where(la_mask, float(opts["BL"]) * w**2 * T**3, 0.0)
-    if np.any(ta_mask):
-        rate_tan = np.where(ta_mask, float(opts["BTN"]) * w * T**4, 0.0)
-        umask = ta_mask & (w > float(spec["omega_cut_ta"]))
-        rate_tau[umask] = float(opts["BTU"]) * w[umask] ** 2 / np.maximum(sinh_x[umask], 1e-12)
-    if np.any(loto_mask):
-        rate_loto = np.where(loto_mask, 1.0 / (float(opts["tau_LTO_ps"]) * 1e-12), 0.0)
-    # Script-side impurity model only: tau_PI^-1 = A*omega^4 + B*omega^2 + C.
-    rate_imp = float(opts.get("A_imp", 0.0)) * w**4
-    rate_imp = rate_imp + float(opts.get("B_imp", 0.0)) * w**2
-    rate_imp = rate_imp + float(opts.get("C_imp", 0.0))
+    # Resolve per-material parameters.
+    mk = str(material_key_name)
+    BL_val = _resolve_scat_param(opts, mk, "BL", 1.18e-24)
+    BTN_val = _resolve_scat_param(opts, mk, "BTN", 10.5e-13)
+    BTU_val = _resolve_scat_param(opts, mk, "BTU", 2.89e-18)
+    tau_LTO_val = _resolve_scat_param(opts, mk, "tau_LTO_ps", 3.5)
+    A_imp_val = _resolve_scat_param(opts, mk, "A_imp", 1.32e-45)
+    B_imp_val = _resolve_scat_param(opts, mk, "B_imp", 0.0)
+    C_imp_val = _resolve_scat_param(opts, mk, "C_imp", 0.0)
+    PB_Tsi_val = _resolve_scat_param(opts, mk, "PB_Tsi", 0.0)
+    PB_Delta_val = _resolve_scat_param(opts, mk, "PB_Delta", 0.0)
+    PB_bulk_L_val = _resolve_scat_param(opts, mk, "PB_bulk_L", 0.0)
+    PB_bulk_F_val = _resolve_scat_param(opts, mk, "PB_bulk_F", 0.68)
 
-    Tsi = float(opts["PB_Tsi"])
-    if Tsi > 0.0:
-        delta = float(opts["PB_Delta"])
+    if np.any(la_mask):
+        rate_la = np.where(la_mask, BL_val * w**2 * T**3, 0.0)
+    if np.any(ta_mask):
+        rate_tan = np.where(ta_mask, BTN_val * w * T**4, 0.0)
+        umask = ta_mask & (w > float(spec["omega_cut_ta"]))
+        rate_tau[umask] = BTU_val * w[umask] ** 2 / np.maximum(sinh_x[umask], 1e-12)
+    if np.any(loto_mask):
+        rate_loto = np.where(loto_mask, 1.0 / (tau_LTO_val * 1e-12), 0.0)
+    rate_imp = A_imp_val * w**4 + B_imp_val * w**2 + C_imp_val
+
+    if PB_Tsi_val > 0.0:
         cos2 = float(cos_beta) ** 2
-        p_spec = np.exp(-4.0 * (np.maximum(q, 0.0) * delta) ** 2 * cos2)
+        p_spec = np.exp(-4.0 * (np.maximum(q, 0.0) * PB_Delta_val) ** 2 * cos2)
         ff = (1.0 - p_spec) / (1.0 + p_spec)
-        rate_pb = vabs / max(Tsi, 1e-12) * ff
-    else:
-        bulk_L = float(opts["PB_bulk_L"])
-        bulk_F = float(opts["PB_bulk_F"])
-        if bulk_L > 0.0:
-            rate_pb = vabs / max(bulk_L * bulk_F, 1e-12)
+        rate_pb = vabs / max(PB_Tsi_val, 1e-12) * ff
+    elif PB_bulk_L_val > 0.0:
+        rate_pb = vabs / max(PB_bulk_L_val * PB_bulk_F_val, 1e-12)
 
     rate_total = rate_la + rate_tan + rate_tau + rate_loto + rate_imp + rate_pb
     energy_eV = HBAR * w / E_CHARGE

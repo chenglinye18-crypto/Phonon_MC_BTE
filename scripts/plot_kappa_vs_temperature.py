@@ -95,7 +95,8 @@ def choose_material(input_dir: Path, requested_name: str) -> dict[str, object]:
 def compute_total_kappa_at_temperature(material_entry: dict[str, object], input_dir: Path, temperature: float, cos_beta: float) -> float:
     opts = build_opts(input_dir, float(temperature))
     spec = build_spectral_grid(dict(material_entry["mat"]), opts)
-    rates = branch_rates(spec, opts, float(temperature), float(cos_beta))
+    mk = str(material_entry.get("key", ""))
+    rates = branch_rates(spec, opts, float(temperature), float(cos_beta), material_key_name=mk)
     table = compute_thermal_conductivity(material_entry, spec, rates, float(temperature))
     return float(table.loc[table["branch"] == "TOTAL", "thermal_conductivity_W_mK"].iloc[0])
 
