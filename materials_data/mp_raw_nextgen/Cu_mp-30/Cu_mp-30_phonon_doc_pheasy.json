@@ -1,0 +1,269 @@
+{
+  "supercell_matrix": [
+    [
+      5.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      5.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      5.0
+    ]
+  ],
+  "composition": {
+    "Cu": 1.0
+  },
+  "post_process_settings": null,
+  "born": [
+    [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ]
+  ],
+  "formula_units": 1,
+  "formula_anonymous": "A",
+  "code": "vasp",
+  "identifier": "aaaegqxq",
+  "nelements": 1,
+  "sum_rules_breaking": null,
+  "volume": 11.364525843152222,
+  "structure": {
+    "@module": "pymatgen.core.structure",
+    "@class": "Structure",
+    "charge": 0.0,
+    "lattice": {
+      "matrix": [
+        [
+          3e-16,
+          1.7844611954188698,
+          1.7844611954188698
+        ],
+        [
+          1.7844611954188698,
+          0.0,
+          1.7844611954188698
+        ],
+        [
+          1.78446119541887,
+          1.7844611954188698,
+          2e-16
+        ]
+      ],
+      "pbc": [
+        true,
+        true,
+        true
+      ],
+      "a": 2.5236092240898715,
+      "b": 2.5236092240898715,
+      "c": 2.5236092240898715,
+      "alpha": 59.99999999999999,
+      "beta": 59.99999999999999,
+      "gamma": 59.99999999999999,
+      "volume": 11.364525843152222
+    },
+    "properties": {},
+    "sites": [
+      {
+        "species": [
+          {
+            "element": "Cu",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "properties": {},
+        "label": "Cu",
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "density_atomic": 11.364525843152222,
+  "primitive_matrix": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "total_dft_energy": null,
+  "calc_meta": [
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-29-385447/launcher_2024-10-21-20-32-13-274645",
+      "name": "generate_frequencies_eigenvectors--2368-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-59-54-399735",
+      "name": "run_phonon_displacements--2369-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-07-349404/launcher_2024-10-21-20-00-52-680499",
+      "name": "dielectric--2370-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-07-349404/launcher_2024-10-21-19-59-37-749946",
+      "name": "generate_phonon_displacements--2371-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-59-32-416878",
+      "name": "static--2372-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-07-349404/launcher_2024-10-21-19-59-37-639316",
+      "name": "get_supercell_size--2373-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-57-58-576563",
+      "name": "tight relax 2--2374-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-55-55-143835",
+      "name": "tight relax 1--2375-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-55-55-040593",
+      "name": "structure_to_primitive--2376-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-29-385447/launcher_2024-10-21-20-32-12-855578",
+      "name": "store_inputs--8618-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-59-55-956936",
+      "name": "phonon static 2/2--8619-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-29-385447/launcher_2024-10-21-20-00-15-794991",
+      "name": "phonon static 1/2--8620-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-59-32-416878",
+      "name": "static_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-07-349404/launcher_2024-10-21-20-00-52-680499",
+      "name": "born_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-57-58-576563",
+      "name": "optimization_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/jzhengap/block_2024-10-15-21-05-15-921995/launcher_2024-10-21-14-22-13-521467/launcher_2024-10-21-19-55-55-143835",
+      "name": "tight_relax_1_run_job_dir",
+      "parents": null
+    }
+  ],
+  "formula_pretty": "Cu",
+  "thermal_displacement_data": null,
+  "volume_per_formula_unit": null,
+  "phonon_method": "pheasy",
+  "density": 9.285087396512235,
+  "symmetry": {
+    "crystal_system": "Cubic",
+    "symbol": "Fm-3m",
+    "hall": "-F 4 2 3",
+    "number": 225,
+    "point_group": "m-3m",
+    "symprec": 0.1,
+    "angle_tolerance": 5.0,
+    "version": "2.7.0"
+  },
+  "epsilon_electronic": null,
+  "last_updated": "2026-05-19 22:51:25.491000+00:00",
+  "epsilon_static": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "nsites": 1,
+  "chemsys": "Cu",
+  "elements": [
+    "Cu"
+  ],
+  "composition_reduced": {
+    "Cu": 1.0
+  },
+  "fields_not_requested": [],
+  "unavailable_fields": []
+}

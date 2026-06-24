@@ -1,0 +1,28 @@
+{
+  "material_id": "mp-492",
+  "label": "TiN",
+  "probe_time_utc": "2026-06-24T08:41:46.736244+00:00",
+  "tried_methods": [
+    "pheasy"
+  ],
+  "tried_path_types": [
+    "latimer_munro"
+  ],
+  "has_phonon_doc": true,
+  "has_bandstructure": true,
+  "has_dos": true,
+  "has_forceconstants": true,
+  "chosen_phonon_method": "pheasy",
+  "chosen_path_type": "latimer_munro",
+  "n_docs": 1,
+  "n_branches": 6,
+  "n_qpoints": 1010,
+  "n_freqs_dos": 201,
+  "frequency_min_THz": -3.61e-07,
+  "frequency_max_THz": 18.3966864598,
+  "frequency_min_THz_dos": -2.460123053,
+  "frequency_max_THz_dos": 34.1460091925,
+  "fc_length": 250,
+  "errors": [],
+  "formula_pretty": "TiN"
+}

@@ -1,0 +1,28 @@
+{
+  "material_id": "mp-30",
+  "label": "Cu",
+  "probe_time_utc": "2026-06-24T08:29:59.459114+00:00",
+  "tried_methods": [
+    "pheasy"
+  ],
+  "tried_path_types": [
+    "latimer_munro"
+  ],
+  "has_phonon_doc": true,
+  "has_bandstructure": true,
+  "has_dos": true,
+  "has_forceconstants": true,
+  "chosen_phonon_method": "pheasy",
+  "chosen_path_type": "latimer_munro",
+  "n_docs": 1,
+  "n_branches": 0,
+  "n_qpoints": 1010,
+  "n_freqs_dos": 201,
+  "frequency_min_THz": null,
+  "frequency_max_THz": null,
+  "frequency_min_THz_dos": -0.5268461896,
+  "frequency_max_THz_dos": 8.6430014174,
+  "fc_length": 125,
+  "errors": [],
+  "formula_pretty": "Cu"
+}

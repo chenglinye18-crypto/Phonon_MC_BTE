@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.1-nextgen-phonon-api
+
+- **Next-gen Materials Project phonon API support** — migrated from old `mp.get_phonon_bandstructure_by_material_id()` to `mpr.materials.phonon` sub-client with `phonon_method="pheasy"`.
+- **All 5 target materials confirmed with pheasy phonon data**: Cu (mp-30, 3 br), TiN (mp-492, 6 br), SiO₂ (mp-7000, 27 br), Si₃N₄ (mp-988, 42 br), HfO₂ (mp-352).
+- **New probe script** (`mp_probe_phonon_nextgen.py`) — single-material probe with pheasy/dfpt method + latimer_munro/setyawan_curtarolo path type support.
+- **Batch phonon availability scanner** (`mp_probe_all_candidate_phonons_nextgen.py`) — probes top-3 candidates per formula, incremental CSV saving, writes `selected_materials_with_phonons_nextgen.toml`.
+- **Updated conversion** — `mp_convert_phonons_to_project_format.py` supports nextgen `frequencies` key (in addition to legacy `branches`), q-path from reciprocal coordinates → 1/m, imaginary mode detection + clipping.
+- **Regression test** (`test_mp_phonon_nextgen_parsing.py`) — validates Cu mp-30 BS parsing, q-path generation, vg estimation, DOS reading. All 8 tests pass.
+- **README updated** — next-gen API pipeline commands, phonon availability table for all 5 materials.
+- Legacy `materials_data/mp_raw/` data preserved; nextgen data stored in `materials_data/mp_raw_nextgen/`.
+
 ## v0.4-materials-data-pipeline
 
 - **Materials Project data pipeline** — new `materials_data/` directory with structured pipeline for downloading MP structures and phonon data.

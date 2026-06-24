@@ -1,0 +1,777 @@
+{
+  "composition": {
+    "Si": 6.0,
+    "N": 8.0
+  },
+  "post_process_settings": null,
+  "epsilon_electronic": null,
+  "thermal_displacement_data": null,
+  "calc_meta": [
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-21-20-27-298862/launcher_2025-05-04-21-55-20-223753/launcher_2025-05-05-08-00-50-100376",
+      "name": "generate_frequencies_eigenvectors--801701-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-07-12-251222/launcher_2025-05-05-02-48-08-935486",
+      "name": "run_phonon_displacements--801702-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-48-06-742591",
+      "name": "dielectric--801703-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-04-29-22-39-30-169649/launcher_2025-05-04-21-17-24-818419/launcher_2025-05-05-02-43-57-570615",
+      "name": "generate_phonon_displacements--801704-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-43-55-343757",
+      "name": "static--801705-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-21-20-27-298862/launcher_2025-05-04-22-23-28-766022/launcher_2025-05-05-02-43-55-211233",
+      "name": "get_supercell_size--801706-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-38-15-396601",
+      "name": "tight relax 2--801707-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-12-12-242785",
+      "name": "tight relax 1--801708-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-03-56-961879/launcher_2025-05-05-02-12-10-329840",
+      "name": "structure_to_primitive--801709-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-04-21-918756/launcher_2025-05-05-08-00-46-094256",
+      "name": "store_inputs--807865-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-09-44-557586/launcher_2025-05-05-05-19-57-076527",
+      "name": "phonon static 6/6--807866-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-04-23-55-02-351945/launcher_2025-05-05-05-19-55-187415",
+      "name": "phonon static 5/6--807867-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-04-23-47-23-678871/launcher_2025-05-05-05-19-46-163547",
+      "name": "phonon static 4/6--807868-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-21-20-27-298862/launcher_2025-05-04-21-51-08-992368/launcher_2025-05-05-05-19-43-971968",
+      "name": "phonon static 3/6--807869-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-21-20-27-298862/launcher_2025-05-04-22-10-57-233160/launcher_2025-05-05-05-19-29-348450",
+      "name": "phonon static 2/6--807870-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-21-20-27-298862/launcher_2025-05-04-21-50-24-445046/launcher_2025-05-05-05-19-28-634096",
+      "name": "phonon static 1/6--807871-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-43-55-343757",
+      "name": "static_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-48-06-742591",
+      "name": "born_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-38-15-396601",
+      "name": "optimization_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-04-23-34-11-633940/launcher_2025-05-05-00-14-54-523645/launcher_2025-05-05-02-12-12-242785",
+      "name": "tight_relax_1_run_job_dir",
+      "parents": null
+    }
+  ],
+  "composition_reduced": {
+    "Si": 3.0,
+    "N": 4.0
+  },
+  "structure": {
+    "@module": "pymatgen.core.structure",
+    "@class": "Structure",
+    "charge": 0.0,
+    "lattice": {
+      "matrix": [
+        [
+          3.8129777306575137,
+          -6.604271085767531,
+          -0.0
+        ],
+        [
+          3.812977668424963,
+          6.604271121697514,
+          -0.0
+        ],
+        [
+          -0.0,
+          -0.0,
+          2.9105705923970318
+        ]
+      ],
+      "pbc": [
+        true,
+        true,
+        true
+      ],
+      "a": 7.625955399082476,
+      "b": 7.625955399082478,
+      "c": 2.9105705923970318,
+      "alpha": 90.0,
+      "beta": 90.0,
+      "gamma": 120.00000000000001,
+      "volume": 146.5876189675271
+    },
+    "properties": {},
+    "sites": [
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.2324909813999826,
+          0.8261123506923457,
+          0.75
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          4.03643087945681,
+          3.920436474793486,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.4063786307076369,
+          0.2324909813999826,
+          0.25
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          2.4359955892916503,
+          -1.1484011661412288,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.8261123506923457,
+          0.5936213692923631,
+          0.25
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          5.413413020822673,
+          -1.535433444832816,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.1738876493076542,
+          0.4063786307076369,
+          0.75
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          2.2125423782598035,
+          1.5354334807628,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.5936213692923631,
+          0.7675090186000174,
+          0.75
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          5.189959809790826,
+          1.1484012020712122,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Si",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.7675090186000174,
+          0.1738876493076542,
+          0.25
+        ],
+        "properties": {},
+        "label": "Si",
+        "xyz": [
+          3.589524519625667,
+          -3.920436438863504,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.3333333333333357,
+          0.6666666666666643,
+          0.75
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          3.8129776891691467,
+          2.2014237192091346,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.6666666666666643,
+          0.3333333333333357,
+          0.25
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          3.8129777099133304,
+          -2.201423683279151,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.9704594903537043,
+          0.6700282372092964,
+          0.75
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          6.255143130917105,
+          -1.984129414328415,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.3004312531444079,
+          0.9704594903537043,
+          0.25
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          4.8458780426629025,
+          4.425048148517738,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.6700282372092964,
+          0.6995687468555921,
+          0.25
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          5.222242756679166,
+          0.19509355885136098,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.3299717627907037,
+          0.3004312531444079,
+          0.75
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          2.403712642403311,
+          -0.19509352292137844,
+          2.1829279442977736
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.0295405096462958,
+          0.3299717627907037,
+          0.25
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          1.3708122681653718,
+          1.9841294502583988,
+          0.7276426480992579
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.6995687468555921,
+          0.0295405096462958,
+          0.75
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          2.7800773564195747,
+          -4.4250481125877545,
+          2.1829279442977736
+        ]
+      }
+    ]
+  },
+  "code": "vasp",
+  "density": 3.1782479585622903,
+  "density_atomic": 10.470544211966223,
+  "born": [
+    [
+      [
+        3.51100242,
+        -0.11370714000000004,
+        0.0
+      ],
+      [
+        -0.14162861,
+        3.15778674,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000003
+      ]
+    ],
+    [
+      [
+        3.3566542829971766,
+        0.23074154844749753,
+        0.0
+      ],
+      [
+        0.20282007844749778,
+        3.312134877002825,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000008
+      ]
+    ],
+    [
+      [
+        3.1355270370028236,
+        -0.0751522034474977,
+        0.0
+      ],
+      [
+        -0.10307367344749752,
+        3.5332621229971766,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000008
+      ]
+    ],
+    [
+      [
+        3.1355270370028236,
+        -0.0751522034474977,
+        0.0
+      ],
+      [
+        -0.10307367344749752,
+        3.5332621229971766,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000008
+      ]
+    ],
+    [
+      [
+        3.3566542829971766,
+        0.23074154844749753,
+        0.0
+      ],
+      [
+        0.20282007844749778,
+        3.312134877002825,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000008
+      ]
+    ],
+    [
+      [
+        3.51100242,
+        -0.11370714000000008,
+        0.0
+      ],
+      [
+        -0.14162861,
+        3.15778674,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        3.3789916900000008
+      ]
+    ],
+    [
+      [
+        -2.92581379,
+        -0.05258287,
+        0.0
+      ],
+      [
+        0.05258287,
+        -2.92581379,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.7376687100000001
+      ]
+    ],
+    [
+      [
+        -2.92581379,
+        -0.05258287,
+        0.0
+      ],
+      [
+        0.05258287,
+        -2.92581379,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.7376687100000003
+      ]
+    ],
+    [
+      [
+        -2.80162414,
+        0.6431629500000001,
+        0.0
+      ],
+      [
+        0.6360291800000001,
+        -1.91662249,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ],
+    [
+      [
+        -2.6917793429505634,
+        -0.6994481031455724,
+        0.0
+      ],
+      [
+        -0.7065818731455726,
+        -2.0264672870494373,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ],
+    [
+      [
+        -1.5839664620494367,
+        0.0669858081455727,
+        0.0
+      ],
+      [
+        0.05985203814557183,
+        -3.1342801679505636,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ],
+    [
+      [
+        -1.5839664620494367,
+        0.0669858081455727,
+        0.0
+      ],
+      [
+        0.05985203814557183,
+        -3.1342801679505636,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ],
+    [
+      [
+        -2.80162414,
+        0.6431629500000002,
+        0.0
+      ],
+      [
+        0.6360291800000002,
+        -1.91662249,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ],
+    [
+      [
+        -2.6917793429505634,
+        -0.6994481031455724,
+        0.0
+      ],
+      [
+        -0.7065818731455726,
+        -2.0264672870494373,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -2.79976878
+      ]
+    ]
+  ],
+  "formula_pretty": "Si3N4",
+  "primitive_matrix": [
+    [
+      1.0,
+      -1.0,
+      0.0
+    ],
+    [
+      1.0,
+      -0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "elements": [
+    "N",
+    "Si"
+  ],
+  "identifier": "aaaelcni",
+  "formula_anonymous": "A3B4",
+  "last_updated": "2026-05-19 21:30:52.858000+00:00",
+  "phonon_method": "pheasy",
+  "volume": 146.5876189675271,
+  "supercell_matrix": [
+    [
+      2.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      2.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      5.0
+    ]
+  ],
+  "symmetry": {
+    "crystal_system": "Hexagonal",
+    "symbol": "P6_3/m",
+    "hall": "-P 6c",
+    "number": 176,
+    "point_group": "6/m",
+    "symprec": 0.1,
+    "angle_tolerance": 5.0,
+    "version": "2.7.0"
+  },
+  "nsites": 14,
+  "total_dft_energy": null,
+  "volume_per_formula_unit": null,
+  "epsilon_static": [
+    [
+      4.27945721,
+      -4e-08,
+      0.0
+    ],
+    [
+      4e-08,
+      4.27945721,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      4.35941288
+    ]
+  ],
+  "chemsys": "N-Si",
+  "sum_rules_breaking": null,
+  "nelements": 2,
+  "formula_units": 2,
+  "fields_not_requested": [],
+  "unavailable_fields": []
+}

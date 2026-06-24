@@ -1,0 +1,315 @@
+{
+  "elements": [
+    "N",
+    "Ti"
+  ],
+  "identifier": "aaaehlup",
+  "total_dft_energy": null,
+  "born": [
+    [
+      [
+        1.75453083,
+        1.291559355779161e-33,
+        9.257954427493013e-34
+      ],
+      [
+        -1.625594948338327e-34,
+        1.75453083,
+        2.1879417013734865e-33
+      ],
+      [
+        0.0,
+        0.0,
+        1.75453083
+      ]
+    ],
+    [
+      [
+        -1.75453083,
+        -1.291559355779161e-33,
+        -9.257954427493013e-34
+      ],
+      [
+        1.625594948338327e-34,
+        -1.75453083,
+        -2.1879417013734865e-33
+      ],
+      [
+        0.0,
+        0.0,
+        -1.75453083
+      ]
+    ]
+  ],
+  "formula_anonymous": "AB",
+  "last_updated": "2026-05-19 21:20:30.830000+00:00",
+  "primitive_matrix": [
+    [
+      1.0,
+      -0.0,
+      0.0
+    ],
+    [
+      -0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "epsilon_static": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "calc_meta": [
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-06-49-059866/launcher_2024-10-22-22-39-04-931088",
+      "name": "generate_frequencies_eigenvectors--16258-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-22-15-36-42-484416/launcher_2024-10-22-19-48-51-124025",
+      "name": "run_phonon_displacements--16259-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-04-183423/launcher_2024-10-22-19-49-45-917726",
+      "name": "dielectric--16260-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-04-183423/launcher_2024-10-22-19-47-58-121884",
+      "name": "generate_phonon_displacements--16261-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-09-415233/launcher_2024-10-22-19-47-56-101310",
+      "name": "static--16262-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-04-183423/launcher_2024-10-22-19-47-57-625159",
+      "name": "get_supercell_size--16263-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-09-415233/launcher_2024-10-22-19-46-11-883421",
+      "name": "tight relax 2--16264-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-22-01-02-34-941170/launcher_2024-10-22-19-42-00-370574",
+      "name": "tight relax 1--16265-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-04-47-42-543879/launcher_2024-10-21-18-54-39-419477",
+      "name": "structure_to_primitive--16266-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-06-49-059866/launcher_2024-10-22-22-39-03-588878",
+      "name": "store_inputs--19420-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-22-15-36-42-484416/launcher_2024-10-22-19-48-55-760442",
+      "name": "phonon static 3/3--19421-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-02-58-835955/launcher_2024-10-22-19-49-33-485755",
+      "name": "phonon static 2/3--19422-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-25-163932/launcher_2024-10-22-19-49-38-125634",
+      "name": "phonon static 1/3--19423-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-09-415233/launcher_2024-10-22-19-47-56-101310",
+      "name": "static_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-04-183423/launcher_2024-10-22-19-49-45-917726",
+      "name": "born_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-21-19-03-09-415233/launcher_2024-10-22-19-46-11-883421",
+      "name": "optimization_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/block_2024-10-19-22-28-16-099168/launcher_2024-10-22-01-02-34-941170/launcher_2024-10-22-19-42-00-370574",
+      "name": "tight_relax_1_run_job_dir",
+      "parents": null
+    }
+  ],
+  "composition_reduced": {
+    "Ti": 1.0,
+    "N": 1.0
+  },
+  "chemsys": "N-Ti",
+  "nsites": 2,
+  "nelements": 2,
+  "density_atomic": 9.297986208293691,
+  "structure": {
+    "@module": "pymatgen.core.structure",
+    "@class": "Structure",
+    "charge": 0.0,
+    "lattice": {
+      "matrix": [
+        [
+          3e-16,
+          2.1027919183100354,
+          2.1027919183100354
+        ],
+        [
+          2.1027919183100354,
+          0.0,
+          2.1027919183100354
+        ],
+        [
+          2.102791918310036,
+          2.1027919183100354,
+          3e-16
+        ]
+      ],
+      "pbc": [
+        true,
+        true,
+        true
+      ],
+      "a": 2.9737968497225897,
+      "b": 2.9737968497225897,
+      "c": 2.9737968497225897,
+      "alpha": 59.999999999999986,
+      "beta": 59.999999999999986,
+      "gamma": 59.99999999999999,
+      "volume": 18.595972416587383
+    },
+    "properties": {},
+    "sites": [
+      {
+        "species": [
+          {
+            "element": "Ti",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "properties": {},
+        "label": "Ti",
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "N",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "properties": {},
+        "label": "N",
+        "xyz": [
+          2.102791918310036,
+          2.1027919183100354,
+          2.1027919183100354
+        ]
+      }
+    ]
+  },
+  "sum_rules_breaking": null,
+  "code": "vasp",
+  "supercell_matrix": [
+    [
+      5.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      5.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      5.0
+    ]
+  ],
+  "formula_units": 1,
+  "volume": 18.595972416587383,
+  "phonon_method": "pheasy",
+  "thermal_displacement_data": null,
+  "epsilon_electronic": null,
+  "formula_pretty": "TiN",
+  "post_process_settings": null,
+  "volume_per_formula_unit": null,
+  "symmetry": {
+    "crystal_system": "Cubic",
+    "symbol": "Fm-3m",
+    "hall": "-F 4 2 3",
+    "number": 225,
+    "point_group": "m-3m",
+    "symprec": 0.1,
+    "angle_tolerance": 5.0,
+    "version": "2.7.0"
+  },
+  "density": 5.525051010346156,
+  "composition": {
+    "Ti": 1.0,
+    "N": 1.0
+  },
+  "fields_not_requested": [],
+  "unavailable_fields": []
+}

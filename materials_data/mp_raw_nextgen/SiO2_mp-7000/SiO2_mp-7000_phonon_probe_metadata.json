@@ -1,0 +1,30 @@
+{
+  "material_id": "mp-7000",
+  "label": "SiO2",
+  "probe_time_utc": "2026-06-24T08:44:34.994556+00:00",
+  "tried_methods": [
+    "pheasy"
+  ],
+  "tried_path_types": [
+    "latimer_munro"
+  ],
+  "has_phonon_doc": true,
+  "has_bandstructure": true,
+  "has_dos": true,
+  "has_forceconstants": true,
+  "chosen_phonon_method": "pheasy",
+  "chosen_path_type": "latimer_munro",
+  "n_docs": 1,
+  "n_branches": 27,
+  "n_qpoints": 1111,
+  "n_freqs_dos": 201,
+  "frequency_min_THz": -0.4062323046,
+  "frequency_max_THz": 38.0004698274,
+  "frequency_min_THz_dos": -4.0698013595,
+  "frequency_max_THz_dos": 41.3943777847,
+  "fc_length": 243,
+  "errors": [
+    "imaginary modes detected: 121 frequencies below -0.1 THz"
+  ],
+  "formula_pretty": "SiO2"
+}

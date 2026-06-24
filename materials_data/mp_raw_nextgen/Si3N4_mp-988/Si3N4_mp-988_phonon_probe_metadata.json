@@ -1,0 +1,28 @@
+{
+  "material_id": "mp-988",
+  "label": "Si3N4",
+  "probe_time_utc": "2026-06-24T08:43:41.705251+00:00",
+  "tried_methods": [
+    "pheasy"
+  ],
+  "tried_path_types": [
+    "latimer_munro"
+  ],
+  "has_phonon_doc": true,
+  "has_bandstructure": true,
+  "has_dos": true,
+  "has_forceconstants": true,
+  "chosen_phonon_method": "pheasy",
+  "chosen_path_type": "latimer_munro",
+  "n_docs": 1,
+  "n_branches": 42,
+  "n_qpoints": 909,
+  "n_freqs_dos": 201,
+  "frequency_min_THz": 2.887e-07,
+  "frequency_max_THz": 34.172976711,
+  "frequency_min_THz_dos": -2.8327378388,
+  "frequency_max_THz_dos": 37.2078116455,
+  "fc_length": 280,
+  "errors": [],
+  "formula_pretty": "Si3N4"
+}

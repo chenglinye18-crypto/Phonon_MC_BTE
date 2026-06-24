@@ -23,12 +23,27 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent
 MATERIALS_DATA = REPO / "materials_data"
 MP_RAW = MATERIALS_DATA / "mp_raw"
+NEXTGEN_DIR = MATERIALS_DATA / "mp_raw_nextgen"
 PROCESSED = MATERIALS_DATA / "processed"
 
 
 def convert_bandstructure(label: str) -> dict[str, Any]:
-    """Try to convert MP phonon bandstructure to project dispersion txt."""
-    bs_path = MP_RAW / label / f"{label}_phonon_bandstructure.json"
+    """Try to convert MP phonon bandstructure to project dispersion txt.
+
+    Supports both legacy MP (branches) and nextgen (frequencies) JSON keys.
+    """
+    # Check nextgen directory first, then legacy.
+    bs_path = NEXTGEN_DIR / f"{label}_mp-30" / f"{label}_mp-30_phonon_bandstructure_pheasy_latimer_munro.json"
+    if not bs_path.is_file():
+        # Try to find any nextgen BS file for this label
+        nextgen_label_dir = NEXTGEN_DIR / f"{label}_mp-30"
+        if nextgen_label_dir.is_dir():
+            for f in nextgen_label_dir.glob("*_bandstructure_*.json"):
+                bs_path = f
+                break
+    if not bs_path.is_file():
+        # Fall back to legacy path
+        bs_path = MP_RAW / label / f"{label}_phonon_bandstructure.json"
     meta: dict[str, Any] = {
         "label": label,
         "has_bandstructure": False,
@@ -61,30 +76,37 @@ def convert_bandstructure(label: str) -> dict[str, Any]:
 
     meta["has_bandstructure"] = True
 
-    # Extract branches and qpoints.
-    branches = data.get("branches", [])
+    # Extract branches and qpoints. Nextgen uses 'frequencies', legacy uses 'branches'.
+    freq_data = data.get("frequencies", data.get("branches", []))
     qpoints = data.get("qpoints", [])
-    if not branches:
-        meta["warnings"].append("empty branches in bandstructure")
+    if not freq_data:
+        meta["warnings"].append("empty frequencies/branches in bandstructure")
         meta["cannot_generate_project_dispersion"] = True
         return meta
 
-    n_branches = len(branches)
+    n_branches = len(freq_data)
     n_q = len(qpoints)
     meta["n_branches"] = n_branches
     meta["n_qpoints"] = n_q
 
-    # Compute q-path distances.
+    # Compute q-path distances from q-points in reciprocal coords.
     dist = [0.0]
     for i in range(1, n_q):
         dq = np.linalg.norm(np.array(qpoints[i]) - np.array(qpoints[i-1]))
         dist.append(dist[-1] + dq)
-    q_dist = np.array(dist, dtype=np.float64)
+    q_dist = np.array(dist, dtype=np.float64) * 1e10  # reciprocal coords → 1/m
 
     # Frequencies and vg estimates.
-    freq_all = np.array(branches, dtype=np.float64)  # (n_branches, n_q) in THz
+    freq_all = np.array(freq_data, dtype=np.float64)  # (n_branches, n_q) in THz
     meta["frequency_min_THz"] = float(np.min(freq_all))
     meta["frequency_max_THz"] = float(np.max(freq_all))
+
+    # Check for imaginary modes
+    neg_mask = freq_all < -0.1
+    if np.any(neg_mask):
+        meta["has_imaginary_modes"] = True
+        meta["warnings"].append(f"{np.count_nonzero(neg_mask)} frequencies below -0.1 THz (imaginary modes)")
+        freq_all = np.maximum(freq_all, 0.0)  # Clip small negative to 0
 
     # Group velocity: finite difference along path.
     vg_all = np.zeros_like(freq_all)
@@ -113,14 +135,16 @@ def convert_bandstructure(label: str) -> dict[str, Any]:
     disp_path = out_dir / f"phonon_dispersion_{label}.txt"
 
     header_lines = [
-        f"# MP phonon bandstructure for {label}",
+        f"# MP phonon bandstructure for {label} (nextgen API: mpr.materials.phonon)",
         f"# branch_names={','.join(['B'+str(i+1) for i in range(n_branches)])}",
         f"# degeneracy={','.join(['1']*n_branches)}",
         "# WARNING: vg estimated from high-symmetry path finite differences.",
-        "# WARNING: MP high-symmetry path distance may not provide full SI q units.",
+        "# WARNING: q-path distance in 1/m, converted from reciprocal coordinates (x1e10).",
         "# WARNING: vg is a first-pass approximation, not full-BZ group velocity.",
         "# column: branch_id, q_path (1/m), frequency_THz, vg_m_per_s",
     ]
+    if meta.get("has_imaginary_modes"):
+        header_lines.append("# WARNING: imaginary modes detected and clipped to 0 THz.")
     with open(disp_path, "w") as f:
         f.write("\n".join(header_lines) + "\n")
         for b in range(n_branches):

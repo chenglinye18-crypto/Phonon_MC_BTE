@@ -1,0 +1,33 @@
+# AUTO-GENERATED: phonon-available materials via next-gen API (pheasy method).
+# All 5 target materials confirmed with BS + DOS + forceconstants.
+# Review before downloading structure data — structures can use old API.
+
+[selected.Cu]
+material_id = "mp-30"
+phonon_method = "pheasy"
+path_type = "latimer_munro"
+# has_BS=True has_DOS=True has_FC=True
+
+[selected.TiN]
+material_id = "mp-492"
+phonon_method = "pheasy"
+path_type = "latimer_munro"
+# has_BS=True has_DOS=True has_FC=True
+
+[selected.SiO2]
+material_id = "mp-7000"
+phonon_method = "pheasy"
+path_type = "latimer_munro"
+# has_BS=True has_DOS=True has_FC=True
+
+[selected.Si3N4]
+material_id = "mp-988"
+phonon_method = "pheasy"
+path_type = "latimer_munro"
+# has_BS=True has_DOS=True has_FC=True
+
+[selected.HfO2]
+material_id = "mp-352"
+phonon_method = "pheasy"
+path_type = "latimer_munro"
+# has_BS=True has_DOS=True has_FC=True

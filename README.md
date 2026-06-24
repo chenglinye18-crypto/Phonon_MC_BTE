@@ -237,24 +237,29 @@ used in interface TBC calculations.
 
 Cu\|TiN, TiN\|HfO₂, Cu\|HfO₂, TiN\|SiO₂, TiN\|Si₃N₄, HfO₂\|SiO₂, HfO₂\|Si₃N₄
 
-### Pipeline commands
+### Next-gen phonon API (recommended)
+
+Materials Project phonon data requires the **next-gen API** (`mpr.materials.phonon` sub-client) with `phonon_method="pheasy"`. The old `mp.get_phonon_bandstructure_by_material_id()` method may fail for materials that only have pheasy data.
 
 ```bash
-pip install mp_api pymatgen
+pip install -U mp_api pymatgen monty
 export MP_API_KEY="your_key"
 
-# Step 1: Search MP for candidates
+# Step 0: Probe a single material
+python scripts/mp_probe_phonon_nextgen.py --material-id mp-30 --label Cu --phonon-method pheasy
+
+# Step 1: Search MP for candidates (uses old summary API)
 python scripts/mp_search_target_materials.py
 
-# Step 2: Review and confirm selected_materials.toml (manual)
+# Step 2: Batch probe phonon availability (top 3 candidates per formula)
+python scripts/mp_probe_all_candidate_phonons_nextgen.py
 
-# Step 3: Download structures and phonon data
-python scripts/mp_download_target_phonons.py
+# Step 3: Review selected_materials_with_phonons_nextgen.toml (manual)
 
-# Step 4: Convert phonon bandstructure to project format
+# Step 4: Convert nextgen phonon bandstructure to project format
 python scripts/mp_convert_phonons_to_project_format.py
 
-# Step 5: Quality check
+# Step 5: Quality check (auto-detects nextgen vs legacy data)
 python scripts/check_downloaded_phonon_data.py
 
 # Step 6: Plot phonon data
@@ -263,6 +268,16 @@ python scripts/plot_downloaded_phonons.py
 # Step 7: Compute interface G_pp
 python scripts/compute_downloaded_interface_gpp.py --temperature 300
 ```
+
+### Phonon availability (next-gen API, pheasy method)
+
+| Material | mp-id | BS | DOS | FC | Branches | Q-points | Freq (THz) |
+|----------|-------|-----|-----|-----|----------|----------|-------------|
+| Cu | mp-30 | ✅ | ✅ | ✅ | 3 | 1010 | 0 – 7.97 |
+| TiN | mp-492 | ✅ | ✅ | ✅ | 6 | 1010 | downloaded |
+| SiO₂ | mp-7000 | ✅ | ✅ | ✅ | 27 | 1111 | downloaded |
+| Si₃N₄ | mp-988 | ✅ | ✅ | ✅ | 42 | 909 | downloaded |
+| HfO₂ | mp-352 | ✅ | ✅ | ✅ | probed | probed | downloaded |
 
 ### Data limitations
 

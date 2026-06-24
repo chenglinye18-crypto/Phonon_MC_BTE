@@ -1,0 +1,7 @@
+label,material_id,has_pheasy_doc,has_dfpt_doc,has_bandstructure,has_dos,has_forceconstants,available_methods,available_path_types,recommended_method,recommended_path_type,n_branches,n_qpoints,frequency_min,frequency_max,error_summary,formula_pretty,energy_above_hull,is_stable
+Cu,mp-30,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,Cu,0.0,True
+Cu,mp-989695,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,Cu,0.0077165399999987,False
+Cu,mp-989782,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,Cu,0.0123399349999999,False
+HfO2,mp-352,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,HfO2,0.0,True
+HfO2,mp-775757,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,HfO2,0.0099286387500008,False
+HfO2,mp-1858,True,False,True,True,True,"['pheasy', 'default']",['latimer_munro'],pheasy,latimer_munro,0,0,,,,HfO2,0.0163839262500005,False
