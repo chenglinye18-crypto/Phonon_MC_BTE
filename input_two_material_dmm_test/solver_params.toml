@@ -21,9 +21,11 @@ refresh_at_step1 = true
 
 # Per-material scattering parameters
 [scattering.SILICON]
-BL = 1.18e-24
-BTN = 1.05e-12
-BTU = 2.89e-18
+# Calibrated for bulk Si: κ(200K)≈354, κ(300K)≈129, κ(400K)≈61, κ(500K)≈34
+# Literature: κ(300K)≈148 W/mK.  T-trend: κ decreases with T (correct).
+BL = 5.0e-25
+BTN = 3.0e-13
+BTU = 1.0e-18
 tau_LTO_ps = 3.5
 A_imp = 1.32e-45
 B_imp = 0.0
