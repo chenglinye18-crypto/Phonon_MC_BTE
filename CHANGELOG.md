@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3-interface-tbc-analytical
+
+- **Analytical metal/nonmetal interface TBC model** — new independent module `interface_tbc_models.py`.
+- **Debye spectrum generator** (`debye_spectrum()`) — branch-resolved DOS and vg from sound speeds, first-pass placeholder for Phonopy/MP data.
+- **DMM transmission and conductance** (`dmm_transmission_from_spectra()`, `dmm_phonon_conductance()`) — works with any spectrum dict (Debye or MC), auto-interpolation to common omega grid.
+- **Li et al. 2015 series-parallel resistor network** (`metal_nonmetal_tbc()`) — electron + phonon channel analysis with coupling length l_ep, channel fractions, and full resistance breakdown.
+- **Parameter sweep function** (`sweep_metal_interface_tbc()`) — Cartesian sweep over any TBC parameter, outputs pandas DataFrame.
+- **Cu/TiN placeholder sweep** (`scripts/sweep_cu_tin_tbc.py`) — Debye spectra, DMM G_pp, G_ep_bulk and G_ep_int sweeps, diagnostic plots and CSVs.
+- **Unit tests** (`scripts/test_interface_tbc_models.py`) — Debye non-negativity, DMM T in [0,1], self-T≈0.5, monotonicity, input validation.
+
 ## v0.2-dmm-multimaterial
 
 - **Multi-material phonon MC infrastructure** — generic material discovery from dispersion files, `material_key()` alias system, `ParticleBlock.material_id` field.

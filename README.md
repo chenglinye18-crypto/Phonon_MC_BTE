@@ -150,6 +150,73 @@ Reflected phonons are diffusely scattered back into the original material with a
 | TBR sanity | `scripts/test_dmm_tbr_estimate.py` | 310/300 K gradient, estimate Kapitza resistance |
 | Long validation | `scripts/run_dmm_validation_long.py` | Three cases: detailed balance, TBR estimate, reciprocity |
 
+## Metal/nonmetal Interface TBC Analytical Model
+
+In addition to the phonon MC + DMM framework for phonon-phonon interface transport, the repository includes an **analytical metal/nonmetal TBC model** based on Li et al. 2015, *"Thermal boundary conductance across metal-nonmetal interfaces: effects of electron-phonon coupling both in metal and at interface."*
+
+### Motivation
+
+Metal/nonmetal (or metal/ceramic) interface thermal conductance cannot be described by phonon DMM alone — electrons in the metal carry significant heat and couple to phonons both in the bulk metal and at the interface.
+
+### Model
+
+The total interface conductance is a parallel combination of electron-mediated and phonon-mediated channels:
+
+```
+G_total = 1/(R_e_m + R_ep) + 1/(R_p_m + R_pp)
+```
+
+where:
+
+| Symbol | Meaning | Unit |
+|--------|---------|------|
+| `l_ep` | Electron-phonon coupling length: `(G_ep_bulk/κ_e + G_ep_bulk/κ_p)^(-1/2)` | m |
+| `R_e_m` | Electron transport resistance in metal: `l_ep / κ_e` | m² K/W |
+| `R_p_m` | Phonon transport resistance in metal: `l_ep / κ_p` | m² K/W |
+| `R_ep` | Interface e-ph coupling resistance: `1 / G_ep_int` | m² K/W |
+| `R_pp` | Interface ph-ph coupling resistance: `1 / G_pp` | m² K/W |
+| `G_pp` | Phonon-phonon interface conductance (from DMM/Debye/MC/Phonopy) | W/(m² K) |
+| `G_ep_int` | Interface electron-phonon conductance | W/(m² K) |
+| `G_ep_bulk` | Bulk electron-phonon coupling constant | W/(m³ K) |
+| `κ_e` | Electronic thermal conductivity of metal | W/(m K) |
+| `κ_p` | Lattice (phonon) thermal conductivity of metal | W/(m K) |
+
+### Usage
+
+```python
+from interface_tbc_models import *
+
+# Build Debye placeholder spectra
+spec_cu = debye_spectrum(v_l=4700, v_t=2300, omega_max=5e13)
+spec_tin = debye_spectrum(v_l=9000, v_t=5500, omega_max=8e13)
+
+# DMM phonon-phonon conductance
+g = dmm_phonon_conductance(spec_cu, spec_tin, T=300)
+G_pp = g["G_pp_W_m2K"]
+
+# Li et al. 2015 full model
+result = metal_nonmetal_tbc(
+    G_pp=G_pp, G_ep_int=1e9, G_ep_bulk=1e17,
+    kappa_e=350, kappa_p=20,
+)
+print(f"G_total = {result['G_total_W_m2K']:.2e} W/(m^2 K)")
+```
+
+### Cu/TiN Example
+
+```bash
+python scripts/sweep_cu_tin_tbc.py --temperature 300 --output-dir output_cu_tin_tbc
+```
+
+**⚠️ The Cu/TiN parameters are first-pass Debye placeholders.** Replace by literature, Materials Project, or Phonopy data for quantitative studies. TiN is a conductive ceramic — it has both electron and phonon contributions but is treated here as the phonon-accepting side in a simplified effective model.
+
+### Scripts
+
+| Script | Description |
+|--------|-------------|
+| `scripts/sweep_cu_tin_tbc.py` | Cu/TiN TBC parameter sweep with Debye placeholder spectra |
+| `scripts/test_interface_tbc_models.py` | Unit tests for Debye, DMM, and Li et al. model |
+
 ## Known Limitations
 
 - **DMM assumes elastic diffuse interface scattering** — no acoustic mismatch model (AMM), no specular reflection component.
