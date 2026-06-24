@@ -292,6 +292,64 @@ python scripts/compute_downloaded_interface_gpp.py --temperature 300
 - **All structures are downloaded** — ready for Phonopy calculations as the
   next step.
 
+## Bulk Thermal Conductivity Calibration
+
+MP/pheasy phonon data provides harmonic spectra — thermal conductivity requires
+a scattering model to compute finite relaxation times.
+
+### RTA model
+
+κp(T) = (1/3) Σ_b ∫ C(ω,T) · vg²(ω) · τ(ω,T) · DOS_b(ω) dω
+
+with scattering rate:
+```
+τ⁻¹ = A_U·ω²·T·exp[-Θ/(b·T)] + A_I·ω⁴ + vg/L_eff + A_0
+```
+
+### Electronic contribution (metals/conductive ceramics)
+
+κe(T) estimated via Wiedemann-Franz:  κe = L₀·T / ρ(T)
+
+### Material-specific guidance
+
+| Material | κ model | Notes |
+|----------|---------|-------|
+| Cu | κe (WF) + κp (RTA) | Total dominated by electrons; do NOT fit total using phonons only |
+| TiN | κe + κp, split uncertain | Conductive ceramic; sweep κe fraction or use literature |
+| SiO₂ | κp only | Dielectric; amorphous films need strong L_eff boundary scattering |
+| Si₃N₄ | κp only | Dielectric; film κ depends strongly on deposition |
+| HfO₂ | κp only | Dielectric; monoclinic/amorphous phase affects κ |
+
+### Usage
+
+```bash
+# Test core models
+python scripts/test_bulk_kappa_models.py
+
+# Set up target data
+cp materials_data/kappa_targets/bulk_kappa_targets_template.csv \
+   materials_data/kappa_targets/bulk_kappa_targets.csv
+# Edit with literature/experimental data
+
+# Calibrate scattering parameters
+python scripts/calibrate_bulk_kappa_T.py
+
+# Sensitivity analysis
+python scripts/sweep_bulk_kappa_sensitivity.py
+```
+
+### Initial κp predictions (Debye fallback, default params, 300K)
+
+| Material | κp(300K) | Notes |
+|----------|----------|-------|
+| Cu | ~7 W/(m K) | uncalibrated; literature ~5-10 W/(m K) |
+| TiN | ~15 W/(m K) | placeholder; needs calibration |
+| SiO₂ | ~2 W/(m K) | with strong disorder (L_eff=1e-8) |
+| Si₃N₄ | ~3 W/(m K) | placeholder |
+| HfO₂ | ~2 W/(m K) | placeholder |
+
+**These are initial uncalibrated estimates.** Replace target data and re-fit.
+
 ## Known Limitations
 
 - **DMM assumes elastic diffuse interface scattering** — no acoustic mismatch model (AMM), no specular reflection component.

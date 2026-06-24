@@ -1,0 +1,6 @@
+material,label,phase,data_level,T_K,kappa_total_W_mK,kappa_e_W_mK,kappa_p_W_mK,source,notes
+Cu,Cu,fcc,placeholder,300,400,,,to_be_replaced,"Cu total kappa is ~400 W/mK at 300K; dominated by electrons (~395), phonon contribution small (~5-10)"
+TiN,TiN,rocksalt,placeholder,300,20,,,to_be_replaced,"TiN total kappa ~5-30 W/mK depending on stoichiometry/film quality"
+SiO2,SiO2,crystalline_or_amorphous_proxy,placeholder,300,1.4,,,to_be_replaced,"amorphous SiO2 kappa ~1.1-1.4 W/mK; crystalline quartz higher"
+Si3N4,Si3N4,crystalline_or_amorphous_proxy,placeholder,300,3.0,,,to_be_replaced,"Si3N4 film kappa ~2-30 W/mK depending on deposition"
+HfO2,HfO2,monoclinic_or_amorphous_proxy,placeholder,300,1.0,,,to_be_replaced,"HfO2 film kappa ~0.5-1.5 W/mK depending on phase and deposition"

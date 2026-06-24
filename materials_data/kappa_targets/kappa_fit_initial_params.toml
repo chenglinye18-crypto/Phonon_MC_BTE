@@ -1,0 +1,62 @@
+# Initial-guess scattering parameters for bulk κ(T) calibration.
+# These are PLACEHOLDER values — replace after fitting to literature data.
+
+[Cu]
+model = "metal"
+fit_target = "kappa_p_or_fraction"
+A_U = 1.0e-45
+A_I = 1.0e-42
+L_eff = 1.0e-6
+A_0 = 1.0e10
+theta_U = 300.0
+b_U = 3.0
+rho0 = 1.7e-8
+alpha = 0.0039
+lorenz = 2.44e-8
+notes = "Cu total kappa mainly electronic; do NOT fit total kappa using phonons only."
+
+[TiN]
+model = "conductive_ceramic"
+fit_target = "kappa_total_with_e_fraction_scan"
+A_U = 1.0e-43
+A_I = 1.0e-42
+L_eff = 1.0e-7
+A_0 = 1.0e11
+theta_U = 400.0
+b_U = 3.0
+rho0 = 1.0e-6
+alpha = 0.001
+lorenz = 2.44e-8
+kappa_e_fraction_range = [0.2, 0.8]
+notes = "TiN has electronic contribution; split between electrons and phonons is uncertain."
+
+[SiO2]
+model = "dielectric"
+fit_target = "kappa_total_as_phonon"
+A_U = 1.0e-43
+A_I = 1.0e-41
+L_eff = 1.0e-8
+A_0 = 1.0e12
+theta_U = 500.0
+b_U = 3.0
+notes = "Amorphous oxide may require strong disorder scattering (L_eff very small)."
+
+[Si3N4]
+model = "dielectric"
+fit_target = "kappa_total_as_phonon"
+A_U = 1.0e-43
+A_I = 1.0e-41
+L_eff = 1.0e-8
+A_0 = 1.0e12
+theta_U = 600.0
+b_U = 3.0
+
+[HfO2]
+model = "dielectric"
+fit_target = "kappa_total_as_phonon"
+A_U = 1.0e-43
+A_I = 1.0e-41
+L_eff = 1.0e-8
+A_0 = 1.0e12
+theta_U = 600.0
+b_U = 3.0

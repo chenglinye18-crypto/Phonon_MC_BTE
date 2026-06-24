@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5-bulk-kappa-calibration
+
+- **RTA bulk thermal conductivity model** (`bulk_kappa_models.py`): Bose heat capacity, scattering rate (Umklapp + impurity + boundary + constant), κp from spectrum integration, Wiedemann-Franz κe.
+- **Temperature-dependent κp(T) from phonon spectra** — supports Debye and MP-processed table-driven spectra.
+- **Scattering parameter calibration** (`calibrate_bulk_kappa_T.py`): fits A_U, A_I, A_0, L_eff to target κ(T) data using scipy least_squares.
+- **Sensitivity sweep** (`sweep_bulk_kappa_sensitivity.py`): L_eff, A_0, A_U sweeps with diagnostic plots for all 5 materials.
+- **Material-specific guidance**: Cu (metal, κe dominant), TiN (conductive ceramic, uncertain split), SiO₂/Si₃N₄/HfO₂ (dielectrics).
+- **Template target data** and initial parameter configs provided.
+- **17 unit tests** covering C_v, scattering rates, κp monotonicity, WF law, Cu electron warning.
+
 ## v0.4.1-nextgen-phonon-api
 
 - **Next-gen Materials Project phonon API support** — migrated from old `mp.get_phonon_bandstructure_by_material_id()` to `mpr.materials.phonon` sub-client with `phonon_method="pheasy"`.
