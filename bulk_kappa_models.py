@@ -31,10 +31,20 @@ def bose_mode_heat_capacity(omega: np.ndarray, T: float) -> np.ndarray:
     x = ħω / k_B T.  Safe against overflow.
     """
     T = max(float(T), 1e-12)
-    x = np.minimum(HBAR * np.asarray(omega, dtype=np.float64) / (K_B * T), 700.0)
-    ex = np.exp(x)
-    denom = np.maximum(ex - 1.0, np.finfo(np.float64).tiny)
-    return K_B * x * x * ex / (denom * denom)
+    w = np.asarray(omega, dtype=np.float64).ravel()
+    x = np.minimum(HBAR * w / (K_B * T), 700.0)
+    # Handle ω → 0:  C → k_B (classical limit), not 0/0.
+    small = w < 1e-6
+    C = np.zeros_like(w)
+    # For ω > 0, use the full quantum formula.
+    mask = ~small
+    if np.any(mask):
+        ex = np.exp(x[mask])
+        denom = np.maximum(ex - 1.0, 1e-300)
+        C[mask] = K_B * x[mask] * x[mask] * ex / (denom * denom)
+    # For ω ≈ 0,  C(ω→0) = k_B  (each mode carries k_B in classical limit).
+    C[small] = K_B
+    return C
 
 
 # ======================================================================
@@ -61,24 +71,32 @@ def scattering_rate_rta(
 
     All terms are clamped ≥ 0.  Minimum rate = 1e-30.
     """
-    omega = np.asarray(omega, dtype=np.float64)
-    vg_arr = np.asarray(vg, dtype=np.float64)
-    T = max(float(T), 1e-12)
+    # Force 1D arrays and ensure matching sizes.
+    w = np.asarray(omega, dtype=np.float64).reshape(-1)
+    v = np.asarray(vg, dtype=np.float64).reshape(-1)
+    n = max(w.size, v.size)
+    if w.size == 1:
+        w = np.full(n, w[0])
+    if v.size == 1:
+        v = np.full(n, v[0])
+    if w.size != v.size:
+        raise ValueError(f"omega and vg size mismatch after broadcast: {w.size} vs {v.size}")
+    T_safe = max(float(T), 1e-12)
 
-    rate = np.zeros_like(omega, dtype=np.float64)
+    rate = np.zeros(n, dtype=np.float64)
 
     # Umklapp
     if A_U > 0:
-        exp_term = np.exp(-theta_U / max(b_U * T, 1e-12))
-        rate += A_U * omega * omega * T * exp_term
+        exp_term = np.exp(-theta_U / max(b_U * T_safe, 1e-12))
+        rate += A_U * w * w * T_safe * exp_term
 
     # Impurity
     if A_I > 0:
-        rate += A_I * omega ** 4
+        rate += A_I * w ** 4
 
     # Boundary / grain
     if np.isfinite(L_eff) and L_eff > 0:
-        rate += np.abs(vg_arr) / L_eff
+        rate += np.abs(v) / L_eff
 
     # Constant background
     if A_0 > 0:
@@ -118,9 +136,35 @@ def kappa_phonon_rta_from_spectrum(
     dict with keys: kappa_p_W_mK, branch_kappa_W_mK, temperature_K, ...
     """
     sp = scattering_params or {}
-    omega = np.asarray(spec["omega"], dtype=np.float64)
+    # Support both debye_spectrum (1D omega) and build_spectral_grid (2D omega/w_mid).
+    if "omega" in spec:
+        w_arr = np.asarray(spec["omega"], dtype=np.float64)
+        omega = w_arr[0] if w_arr.ndim == 2 else w_arr.ravel()
+    elif "w_mid" in spec:
+        wm = np.asarray(spec["w_mid"], dtype=np.float64)
+        omega = wm[0] if wm.ndim == 2 else wm.ravel()
+    else:
+        raise KeyError("spec must contain 'omega' or 'w_mid'")
     DOS_b = np.asarray(spec["DOS_w_b"], dtype=np.float64)
-    vg_b = np.asarray(spec["vg_w_b"], dtype=np.float64)
+    vg_raw = np.asarray(spec.get("vg_w_b", spec.get("vg_w", np.zeros_like(DOS_b))),
+                        dtype=np.float64)
+    # High-symmetry path vg is sparse and NOT a transport vg.
+    # Use MP DOS (good) but replace sparse vg with representative sound speeds.
+    # Extract per-branch average vg from non-zero values, or use material defaults.
+    vg_fraction = np.count_nonzero(np.abs(vg_raw) > 1.0) / max(vg_raw.size, 1)
+    vg_max_val = max(float(np.max(np.abs(vg_raw))), 1000.0)
+    vg_per_branch = np.zeros(DOS_b.shape[0], dtype=np.float64)
+    for ib in range(DOS_b.shape[0]):
+        nz = np.abs(vg_raw[ib]) > 1.0
+        vg_per_branch[ib] = float(np.mean(np.abs(vg_raw[ib][nz]))) if np.any(nz) else vg_max_val * 0.3
+    vg_per_branch = np.maximum(vg_per_branch, 500.0)  # floor 500 m/s
+    # Build constant-vg array matching DOS shape.
+    vg_b = np.tile(vg_per_branch[:, None], (1, DOS_b.shape[1]))
+    if vg_fraction < 0.1:
+        spec.setdefault("warnings", []).append(
+            f"vg data sparse ({vg_fraction:.1%} non-zero); using per-branch avg vg={vg_per_branch} m/s. "
+            "This is a first-pass transport approximation."
+        )
     B = DOS_b.shape[0]
 
     A_U = float(sp.get("A_U", 0.0))
@@ -134,13 +178,14 @@ def kappa_phonon_rta_from_spectrum(
     branch_kappa = np.zeros(B, dtype=np.float64)
 
     for ib in range(B):
+        vg_ib = np.abs(vg_b[ib]).reshape(-1)  # ensure 1D
         C = bose_mode_heat_capacity(omega, T)
-        vg2 = np.abs(vg_b[ib]) ** 2
-        tau_inv = scattering_rate_rta(omega, np.abs(vg_b[ib]), T,
+        vg2 = vg_ib ** 2
+        tau_inv = scattering_rate_rta(omega, vg_ib, T,
                                       A_U=A_U, theta_U=theta_U, b_U=b_U,
                                       A_I=A_I, L_eff=L_eff, A_0=A_0)
         tau = 1.0 / np.maximum(tau_inv, 1e-30)
-        integrand = C * vg2 * tau * DOS_b[ib]
+        integrand = C * vg2 * tau * np.abs(DOS_b[ib]).ravel()
         branch_kappa[ib] = float(np.trapz(integrand, omega))
 
     kappa_total = float(np.sum(branch_kappa)) * geometry_factor

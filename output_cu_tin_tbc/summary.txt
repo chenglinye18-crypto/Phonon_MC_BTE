@@ -1,0 +1,41 @@
+Cu/TiN Interface TBC — Analytical Estimate
+============================================================
+
+IMPORTANT: Placeholder Debye-model parameters.  Replace by
+literature / Materials Project / Phonopy data for quantitative studies.
+
+Temperature:             300.0 K
+
+--- Cu Debye spectrum ---
+  v_l              = 4700.0 m/s
+  v_t              = 2300.0 m/s
+  omega_max        = 5.00e+13 rad/s
+
+--- TiN Debye spectrum ---
+  v_l              = 9000.0 m/s
+  v_t              = 5500.0 m/s
+  omega_max        = 8.00e+13 rad/s
+
+--- DMM phonon-phonon conductance ---
+  G_pp             = 4.4409e+08 W/(m^2 K)
+  G_pp             = 0.4441 GW/(m^2 K)
+
+--- Metal-side parameters (Cu) ---
+  kappa_e          = 350.0 W/(m K)
+  kappa_p          = 20.0 W/(m K)
+
+--- G_ep_bulk sweep (G_ep_int fixed at 1e9) ---
+  G_ep_bulk range  = 1.0e+16 – 1.0e+19 W/(m^3 K)
+  G_total range    = 1.12e+09 – 1.43e+09 W/(m^2 K)
+
+--- G_ep_int sweep (G_ep_bulk fixed at 1e17) ---
+  G_ep_int range   = 1.0e+07 – 1.0e+10 W/(m^2 K)
+  G_total range    = 3.50e+08 – 7.52e+09 W/(m^2 K)
+
+--- Interpretation ---
+G_total is dominated by the parallel combination of an electron-
+mediated channel and a phonon-mediated channel.  Increasing
+G_ep_bulk reduces the coupling length l_ep, increasing G_e_channel.
+Increasing G_ep_int directly increases G_e_channel.
+The phonon channel (G_pp) provides a floor when the electron
+channels are weak.

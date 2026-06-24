@@ -1,0 +1,733 @@
+{
+  "thermal_displacement_data": null,
+  "total_dft_energy": null,
+  "epsilon_static": [
+    [
+      5.00089304,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      4.98040826,
+      -0.13915625
+    ],
+    [
+      0.0,
+      -0.13915626,
+      4.69483542
+    ]
+  ],
+  "nsites": 12,
+  "nelements": 2,
+  "formula_units": 4,
+  "supercell_matrix": [
+    [
+      3.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      3.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      3.0
+    ]
+  ],
+  "composition": {
+    "Hf": 4.0,
+    "O": 8.0
+  },
+  "formula_anonymous": "AB2",
+  "structure": {
+    "@module": "pymatgen.core.structure",
+    "@class": "Structure",
+    "charge": 0.0,
+    "lattice": {
+      "matrix": [
+        [
+          0.0,
+          5.074874493078822,
+          0.0018011218162025
+        ],
+        [
+          5.156485482966287,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.874721910705723,
+          -5.169032622397298
+        ]
+      ],
+      "pbc": [
+        true,
+        true,
+        true
+      ],
+      "a": 5.074874812696548,
+      "b": 5.156485482966287,
+      "c": 5.242521976346514,
+      "alpha": 90.0,
+      "beta": 99.62513535657006,
+      "gamma": 90.0,
+      "volume": 135.2577923075807
+    },
+    "properties": {},
+    "sites": [
+      {
+        "species": [
+          {
+            "element": "Hf",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.7226764062866451,
+          0.5427043975594756,
+          0.2923047220746113
+        ],
+        "properties": {},
+        "label": "Hf",
+        "xyz": [
+          2.798447347557401,
+          3.411806716012553,
+          -1.5096310158430235
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Hf",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.2773235937133549,
+          0.0427043975594756,
+          0.2076952779253887
+        ],
+        "properties": {},
+        "label": "Hf",
+        "xyz": [
+          0.2202046060742569,
+          1.225706821713407,
+          -1.0730841735394228
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Hf",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.2773235937133549,
+          0.4572956024405244,
+          0.7076952779253887
+        ],
+        "properties": {},
+        "label": "Hf",
+        "xyz": [
+          2.358038135408887,
+          0.7883458663605455,
+          -3.6576004847380714
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "Hf",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.7226764062866451,
+          0.9572956024405244,
+          0.7923047220746113
+        ],
+        "properties": {},
+        "label": "Hf",
+        "xyz": [
+          4.93628087689203,
+          2.9744457606596915,
+          -4.094147327041672
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.5530842996781473,
+          0.2582900583758914,
+          0.0191682948084519
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          1.331868936409799,
+          2.7900664774991735,
+          -0.09808536898226725
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.4469157003218456,
+          0.7582900583758914,
+          0.4808317051915481
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          3.9101116778929423,
+          1.8474470602267508,
+          -2.4846298204001793
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.4469157003218456,
+          0.7417099416241086,
+          0.980831705191548
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          3.8246165465564887,
+          1.4100861048738893,
+          -5.069146131598828
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.5530842996781473,
+          0.2417099416241086,
+          0.519168294808452
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          1.2463738050733448,
+          2.352705522146312,
+          -2.6826016801809165
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.9283455374156446,
+          0.6618374835080374,
+          0.6599702829470502
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          3.4127553757921345,
+          4.133946621685765,
+          -3.409735858965664
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.0716544625843554,
+          0.1618374835080374,
+          0.8400297170529498
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          0.8345126343089908,
+          -0.37115499466552815,
+          -4.34201195281408
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.0716544625843554,
+          0.3381625164919626,
+          0.3400297170529498
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          1.7437301071741529,
+          0.06620596068733338,
+          -1.7574956416154315
+        ]
+      },
+      {
+        "species": [
+          {
+            "element": "O",
+            "occu": 1.0
+          }
+        ],
+        "abc": [
+          0.9283455374156446,
+          0.8381625164919626,
+          0.1599702829470502
+        ],
+        "properties": {},
+        "label": "O",
+        "xyz": [
+          4.321972848657297,
+          4.571307577038627,
+          -0.8252195477670151
+        ]
+      }
+    ]
+  },
+  "epsilon_electronic": null,
+  "code": "vasp",
+  "symmetry": {
+    "crystal_system": "Monoclinic",
+    "symbol": "P2_1/c",
+    "hall": "-P 2ybc",
+    "number": 14,
+    "point_group": "2/m",
+    "symprec": 0.1,
+    "angle_tolerance": 5.0,
+    "version": "2.7.0"
+  },
+  "density_atomic": 11.271482692298392,
+  "sum_rules_breaking": null,
+  "phonon_method": "pheasy",
+  "elements": [
+    "Hf",
+    "O"
+  ],
+  "identifier": "aaaelfwc",
+  "formula_pretty": "HfO2",
+  "chemsys": "Hf-O",
+  "composition_reduced": {
+    "Hf": 1.0,
+    "O": 2.0
+  },
+  "last_updated": "2026-05-19 21:20:03.718000+00:00",
+  "volume_per_formula_unit": null,
+  "calc_meta": [
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-28-53-251374/launcher_2025-05-19-18-05-38-070407",
+      "name": "generate_frequencies_eigenvectors--868733-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-02-40-40-898241/launcher_2025-05-19-11-10-53-624578",
+      "name": "run_phonon_displacements--868734-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-11-10-16-364844",
+      "name": "dielectric--868735-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-02-40-40-898241/launcher_2025-05-19-11-00-14-581463",
+      "name": "generate_phonon_displacements--868736-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-11-00-12-556621",
+      "name": "static--868737-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-02-40-40-898241/launcher_2025-05-19-11-00-11-927773",
+      "name": "get_supercell_size--868738-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-10-50-01-352489",
+      "name": "tight relax 2--868739-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-06-40-07-347906",
+      "name": "tight relax 1--868740-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-06-40-05-900653",
+      "name": "structure_to_primitive--868741-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-28-53-251374/launcher_2025-05-19-18-05-30-958233",
+      "name": "store_inputs--876565-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-22-44-43-693846/launcher_2025-05-18-09-54-31-453998/launcher_2025-05-19-17-33-18-733576",
+      "name": "phonon static 11/11--876566-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-22-44-43-693846/launcher_2025-05-18-09-46-42-140677/launcher_2025-05-19-17-33-01-027071",
+      "name": "phonon static 10/11--876567-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-28-53-251374/launcher_2025-05-19-17-32-59-993066",
+      "name": "phonon static 9/11--876568-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-02-41-18-603128/launcher_2025-05-19-17-32-53-175602",
+      "name": "phonon static 8/11--876569-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-02-43-06-389135/launcher_2025-05-19-17-32-42-234128",
+      "name": "phonon static 7/11--876570-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-22-44-43-693846/launcher_2025-05-18-09-57-46-799414/launcher_2025-05-19-17-32-38-618327",
+      "name": "phonon static 6/11--876571-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-41-31-095105/launcher_2025-05-19-17-32-38-461968",
+      "name": "phonon static 5/11--876572-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-23-12-372447/launcher_2025-05-19-17-32-37-085842",
+      "name": "phonon static 4/11--876573-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-15-38-377777/launcher_2025-05-19-17-32-35-151739",
+      "name": "phonon static 3/11--876574-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-22-19-820157/launcher_2025-05-19-17-31-50-634741",
+      "name": "phonon static 2/11--876575-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-14-02-34-26-959176/launcher_2025-05-14-22-39-03-144680/launcher_2025-05-19-17-31-47-956942",
+      "name": "phonon static 1/11--876576-0",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-11-00-12-556621",
+      "name": "static_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-11-10-16-364844",
+      "name": "born_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-10-50-01-352489",
+      "name": "optimization_run_job_dir",
+      "parents": null
+    },
+    {
+      "identifier": null,
+      "dir_name": "/global/cfs/cdirs/matgen/hrushi99/pheasy_hrushikesh/NREL/pheasy/pheasy_3_9/block_2025-05-08-21-28-34-287658/launcher_2025-05-14-02-32-36-315775/launcher_2025-05-19-06-40-07-347906",
+      "name": "tight_relax_1_run_job_dir",
+      "parents": null
+    }
+  ],
+  "volume": 135.2577923075807,
+  "density": 10.33655422011493,
+  "post_process_settings": null,
+  "born": [
+    [
+      [
+        5.30147702,
+        0.13817874,
+        0.16838445000000002
+      ],
+      [
+        0.38410669,
+        5.31092873,
+        -0.22159936000000005
+      ],
+      [
+        0.35670019999999997,
+        -0.23266494999999998,
+        4.77375354
+      ]
+    ],
+    [
+      [
+        5.30147702,
+        -0.13817874,
+        -0.16838445000000005
+      ],
+      [
+        -0.38410669,
+        5.31092873,
+        -0.2215993600000001
+      ],
+      [
+        -0.3567001999999999,
+        -0.23266494999999995,
+        4.77375354
+      ]
+    ],
+    [
+      [
+        5.30147702,
+        0.13817874,
+        0.16838445000000005
+      ],
+      [
+        0.38410669,
+        5.31092873,
+        -0.2215993600000001
+      ],
+      [
+        0.3567001999999999,
+        -0.23266494999999995,
+        4.77375354
+      ]
+    ],
+    [
+      [
+        5.30147702,
+        -0.13817874,
+        -0.16838445000000005
+      ],
+      [
+        -0.38410669,
+        5.31092873,
+        -0.2215993600000001
+      ],
+      [
+        -0.3567001999999999,
+        -0.23266494999999995,
+        4.77375354
+      ]
+    ],
+    [
+      [
+        -2.72415626,
+        -0.17068903,
+        0.35167470000000006
+      ],
+      [
+        -0.10552524,
+        -2.37134212,
+        3.580000000000001e-06
+      ],
+      [
+        0.4200196199999999,
+        0.04435185,
+        -2.53107045
+      ]
+    ],
+    [
+      [
+        -2.72415626,
+        0.17068903,
+        -0.3516747000000001
+      ],
+      [
+        0.10552524,
+        -2.37134212,
+        3.5800000000000017e-06
+      ],
+      [
+        -0.42001961999999987,
+        0.04435185,
+        -2.53107045
+      ]
+    ],
+    [
+      [
+        -2.72415626,
+        -0.17068903,
+        0.3516747000000001
+      ],
+      [
+        -0.10552524,
+        -2.37134212,
+        3.5800000000000017e-06
+      ],
+      [
+        0.42001961999999987,
+        0.04435185,
+        -2.53107045
+      ]
+    ],
+    [
+      [
+        -2.72415626,
+        0.17068903,
+        -0.3516747000000001
+      ],
+      [
+        0.10552524,
+        -2.37134212,
+        3.5800000000000017e-06
+      ],
+      [
+        -0.42001961999999987,
+        0.04435185,
+        -2.53107045
+      ]
+    ],
+    [
+      [
+        -2.57732076,
+        1.28351655,
+        0.6532758500000001
+      ],
+      [
+        1.04606639,
+        -2.93958661,
+        0.22159578000000005
+      ],
+      [
+        0.6526071299999999,
+        0.18831309999999998,
+        -2.24268308
+      ]
+    ],
+    [
+      [
+        -2.57732076,
+        -1.28351655,
+        -0.6532758500000002
+      ],
+      [
+        -1.04606639,
+        -2.93958661,
+        0.2215957800000001
+      ],
+      [
+        -0.6526071299999998,
+        0.18831309999999996,
+        -2.24268308
+      ]
+    ],
+    [
+      [
+        -2.57732076,
+        1.28351655,
+        0.6532758500000002
+      ],
+      [
+        1.04606639,
+        -2.93958661,
+        0.2215957800000001
+      ],
+      [
+        0.6526071299999998,
+        0.18831309999999996,
+        -2.24268308
+      ]
+    ],
+    [
+      [
+        -2.57732076,
+        -1.28351655,
+        -0.6532758500000002
+      ],
+      [
+        -1.04606639,
+        -2.93958661,
+        0.2215957800000001
+      ],
+      [
+        -0.6526071299999998,
+        0.18831309999999996,
+        -2.24268308
+      ]
+    ]
+  ],
+  "primitive_matrix": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "fields_not_requested": [],
+  "unavailable_fields": []
+}

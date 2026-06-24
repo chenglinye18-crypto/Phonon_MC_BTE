@@ -1,0 +1,28 @@
+{
+  "material_id": "mp-352",
+  "label": "HfO2",
+  "probe_time_utc": "2026-06-24T09:10:13.141857+00:00",
+  "tried_methods": [
+    "pheasy"
+  ],
+  "tried_path_types": [
+    "latimer_munro"
+  ],
+  "has_phonon_doc": true,
+  "has_bandstructure": true,
+  "has_dos": true,
+  "has_forceconstants": true,
+  "chosen_phonon_method": "pheasy",
+  "chosen_path_type": "latimer_munro",
+  "n_docs": 1,
+  "n_branches": 36,
+  "n_qpoints": 2222,
+  "n_freqs_dos": 201,
+  "frequency_min_THz": -2.245e-07,
+  "frequency_max_THz": 24.262996859,
+  "frequency_min_THz_dos": -2.2705162701,
+  "frequency_max_THz_dos": 26.7531782279,
+  "fc_length": 324,
+  "errors": [],
+  "formula_pretty": "HfO2"
+}
