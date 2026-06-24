@@ -1,0 +1,39 @@
+# Target materials for interface TBC data pipeline.
+# MP = Materials Project crystalline proxy.
+# Device materials may be amorphous / polycrystalline — MP data is a first-pass proxy.
+
+[materials.Cu]
+formula = "Cu"
+preferred_structure = "fcc"
+notes = "metal interconnect; MP has stable fcc Cu"
+
+[materials.TiN]
+formula = "TiN"
+preferred_structure = "rocksalt"
+notes = "metal nitride barrier / conductive ceramic; MP has stable rocksalt TiN"
+
+[materials.SiO2]
+formula = "SiO2"
+preferred_structure = "quartz or low-energy crystalline proxy"
+notes = "device oxide may be amorphous; MP crystalline phase is a proxy"
+
+[materials.Si3N4]
+formula = "Si3N4"
+preferred_structure = "alpha or beta silicon nitride"
+notes = "device silicon nitride may be amorphous or non-stoichiometric"
+
+[materials.HfO2]
+formula = "HfO2"
+preferred_structure = "monoclinic stable phase; also record tetragonal/cubic if available"
+notes = "RRAM layer may be amorphous/polycrystalline; MP crystalline phase is a proxy"
+
+[interfaces]
+pairs = [
+  ["Cu", "TiN"],
+  ["TiN", "HfO2"],
+  ["Cu", "HfO2"],
+  ["TiN", "SiO2"],
+  ["TiN", "Si3N4"],
+  ["HfO2", "SiO2"],
+  ["HfO2", "Si3N4"],
+]

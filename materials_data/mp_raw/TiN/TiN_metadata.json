@@ -1,0 +1,15 @@
+{
+  "label": "TiN",
+  "material_id": "mp-492",
+  "download_time_utc": "2026-06-24T08:03:05.609682+00:00",
+  "has_structure": true,
+  "has_phonon_bandstructure": false,
+  "has_phonon_dos": false,
+  "needs_phonopy": true,
+  "warnings": [
+    "phonon bandstructure download failed: No phonon bandstructure data found for material ID: mp-492 and phonon method: dfpt.",
+    "phonon DOS download failed: No phonon dos data found for material ID: mp-492 and phonon method: dfpt."
+  ],
+  "structure_formula": "TiN",
+  "structure_n_sites": 2
+}

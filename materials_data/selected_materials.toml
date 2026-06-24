@@ -1,0 +1,23 @@
+# AUTO-GENERATED material selection recommendations.
+# HUMAN REVIEW REQUIRED: check each mp-id and confirm before downloading.
+# Uncomment and adjust as needed.
+
+[selected.Cu]
+# Recommended based on stability and energy_above_hull.
+material_id = "mp-30"
+
+[selected.TiN]
+# Recommended based on stability and energy_above_hull.
+material_id = "mp-492"
+
+[selected.SiO2]
+# Recommended based on stability and energy_above_hull.
+material_id = "mp-7000"
+
+[selected.Si3N4]
+# Recommended based on stability and energy_above_hull.
+material_id = "mp-988"
+
+[selected.HfO2]
+# Recommended based on stability and energy_above_hull.
+material_id = "mp-352"

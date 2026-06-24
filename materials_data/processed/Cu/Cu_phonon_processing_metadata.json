@@ -1,0 +1,18 @@
+{
+  "label": "Cu",
+  "has_bandstructure": false,
+  "has_dos": false,
+  "generated_dispersion_txt": false,
+  "n_branches": 0,
+  "n_qpoints": 0,
+  "frequency_min_THz": null,
+  "frequency_max_THz": null,
+  "vg_min_m_s": null,
+  "vg_max_m_s": null,
+  "warnings": [
+    "no phonon bandstructure JSON",
+    "no phonon DOS JSON"
+  ],
+  "cannot_generate_project_dispersion": true,
+  "needs_phonopy_for_vg": true
+}

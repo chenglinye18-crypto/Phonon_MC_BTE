@@ -1,0 +1,6 @@
+label,status,has_structure,has_phonon_bandstructure,has_phonon_dos,has_dispersion_txt,dispersion_ok,n_branches,n_qpoints,f_min_THz,f_max_THz,freq_non_negative,vg_finite,notes
+Cu,structure_only_needs_phonopy,True,False,False,False,False,0,0,,,False,False,['no converted dispersion file']
+HfO2,structure_only_needs_phonopy,True,False,False,False,False,0,0,,,False,False,['no converted dispersion file']
+Si3N4,structure_only_needs_phonopy,True,False,False,False,False,0,0,,,False,False,['no converted dispersion file']
+SiO2,structure_only_needs_phonopy,True,False,False,False,False,0,0,,,False,False,['no converted dispersion file']
+TiN,structure_only_needs_phonopy,True,False,False,False,False,0,0,,,False,False,['no converted dispersion file']

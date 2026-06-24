@@ -1,0 +1,86 @@
+{
+  "download_time_utc": "2026-06-24T08:03:44.725053+00:00",
+  "mp_database_version": "Materials Project (mp_api v2024+)",
+  "materials": {
+    "Cu": {
+      "label": "Cu",
+      "material_id": "mp-30",
+      "download_time_utc": "2026-06-24T08:03:03.575857+00:00",
+      "has_structure": true,
+      "has_phonon_bandstructure": false,
+      "has_phonon_dos": false,
+      "needs_phonopy": true,
+      "warnings": [
+        "phonon bandstructure download failed: No phonon bandstructure data found for material ID: mp-30 and phonon method: dfpt.",
+        "phonon DOS download failed: No phonon dos data found for material ID: mp-30 and phonon method: dfpt."
+      ],
+      "structure_formula": "Cu",
+      "structure_n_sites": 1,
+      "mp_database_version": "Materials Project (mp_api v2024+)"
+    },
+    "TiN": {
+      "label": "TiN",
+      "material_id": "mp-492",
+      "download_time_utc": "2026-06-24T08:03:05.609682+00:00",
+      "has_structure": true,
+      "has_phonon_bandstructure": false,
+      "has_phonon_dos": false,
+      "needs_phonopy": true,
+      "warnings": [
+        "phonon bandstructure download failed: No phonon bandstructure data found for material ID: mp-492 and phonon method: dfpt.",
+        "phonon DOS download failed: No phonon dos data found for material ID: mp-492 and phonon method: dfpt."
+      ],
+      "structure_formula": "TiN",
+      "structure_n_sites": 2,
+      "mp_database_version": "Materials Project (mp_api v2024+)"
+    },
+    "SiO2": {
+      "label": "SiO2",
+      "material_id": "mp-7000",
+      "download_time_utc": "2026-06-24T08:03:07.388664+00:00",
+      "has_structure": true,
+      "has_phonon_bandstructure": false,
+      "has_phonon_dos": false,
+      "needs_phonopy": true,
+      "warnings": [
+        "phonon bandstructure download failed: 'PhononBS' object has no attribute 'as_dict'",
+        "phonon DOS download failed: 'PhononDOS' object has no attribute 'as_dict'"
+      ],
+      "structure_formula": "SiO2",
+      "structure_n_sites": 9,
+      "mp_database_version": "Materials Project (mp_api v2024+)"
+    },
+    "Si3N4": {
+      "label": "Si3N4",
+      "material_id": "mp-988",
+      "download_time_utc": "2026-06-24T08:03:40.891821+00:00",
+      "has_structure": true,
+      "has_phonon_bandstructure": false,
+      "has_phonon_dos": false,
+      "needs_phonopy": true,
+      "warnings": [
+        "phonon bandstructure download failed: No phonon bandstructure data found for material ID: mp-988 and phonon method: dfpt.",
+        "phonon DOS download failed: No phonon dos data found for material ID: mp-988 and phonon method: dfpt."
+      ],
+      "structure_formula": "Si3N4",
+      "structure_n_sites": 14,
+      "mp_database_version": "Materials Project (mp_api v2024+)"
+    },
+    "HfO2": {
+      "label": "HfO2",
+      "material_id": "mp-352",
+      "download_time_utc": "2026-06-24T08:03:42.678405+00:00",
+      "has_structure": true,
+      "has_phonon_bandstructure": false,
+      "has_phonon_dos": false,
+      "needs_phonopy": true,
+      "warnings": [
+        "phonon bandstructure download failed: No phonon bandstructure data found for material ID: mp-352 and phonon method: dfpt.",
+        "phonon DOS download failed: No phonon dos data found for material ID: mp-352 and phonon method: dfpt."
+      ],
+      "structure_formula": "HfO2",
+      "structure_n_sites": 12,
+      "mp_database_version": "Materials Project (mp_api v2024+)"
+    }
+  }
+}

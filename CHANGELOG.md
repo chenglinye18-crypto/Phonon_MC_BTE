@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4-materials-data-pipeline
+
+- **Materials Project data pipeline** — new `materials_data/` directory with structured pipeline for downloading MP structures and phonon data.
+- **Target material config** (`material_targets.toml`) — Cu, TiN, SiO₂, Si₃N₄, HfO₂ with 7 interface pairs.
+- **MP candidate search** (`mp_search_target_materials.py`) — queries MP for each formula, saves candidate tables, auto-recommends mp-ids.
+- **MP data download** (`mp_download_target_phonons.py`) — downloads structure (CIF), phonon bandstructure, phonon DOS, metadata; graceful fallback when phonon data is unavailable.
+- **Phonon conversion** (`mp_convert_phonons_to_project_format.py`) — MP bandstructure → `phonon_dispersion_{label}.txt` with finite-difference vg estimates.
+- **Quality check** (`check_downloaded_phonon_data.py`) — validates structures, dispersion files, frequency non-negativity, vg finiteness; outputs CSV/MD status report.
+- **Phonon plotting** (`plot_downloaded_phonons.py`) — bandstructure, vg vs frequency, DOS plots per material.
+- **Interface G_pp computation** (`compute_downloaded_interface_gpp.py`) — DMM G_pp for all target interface pairs using converted dispersion files.
+- **Current status**: all 5 materials have structures; none have MP DFPT phonon data → all marked `needs_phonopy`.  Pipeline framework is complete and ready for Phonopy data ingestion.
+
 ## v0.3-interface-tbc-analytical
 
 - **Analytical metal/nonmetal interface TBC model** — new independent module `interface_tbc_models.py`.

@@ -217,6 +217,66 @@ python scripts/sweep_cu_tin_tbc.py --temperature 300 --output-dir output_cu_tin_
 | `scripts/sweep_cu_tin_tbc.py` | Cu/TiN TBC parameter sweep with Debye placeholder spectra |
 | `scripts/test_interface_tbc_models.py` | Unit tests for Debye, DMM, and Li et al. model |
 
+## Materials Data Pipeline for Interface TBC
+
+The `materials_data/` directory contains a pipeline for downloading and
+processing Materials Project structural and phonon data for target materials
+used in interface TBC calculations.
+
+### Target materials
+
+| Material | Role | MP crystalline proxy |
+|----------|------|---------------------|
+| Cu | metal interconnect | fcc Cu (mp-30) |
+| TiN | barrier / conductive ceramic | rocksalt TiN (mp-492) |
+| SiO₂ | device oxide | quartz or low-E crystalline (mp-7000) |
+| Si₃N₄ | device nitride | α/β Si₃N₄ (mp-988) |
+| HfO₂ | RRAM switching layer | monoclinic HfO₂ (mp-352) |
+
+### Interface pairs
+
+Cu\|TiN, TiN\|HfO₂, Cu\|HfO₂, TiN\|SiO₂, TiN\|Si₃N₄, HfO₂\|SiO₂, HfO₂\|Si₃N₄
+
+### Pipeline commands
+
+```bash
+pip install mp_api pymatgen
+export MP_API_KEY="your_key"
+
+# Step 1: Search MP for candidates
+python scripts/mp_search_target_materials.py
+
+# Step 2: Review and confirm selected_materials.toml (manual)
+
+# Step 3: Download structures and phonon data
+python scripts/mp_download_target_phonons.py
+
+# Step 4: Convert phonon bandstructure to project format
+python scripts/mp_convert_phonons_to_project_format.py
+
+# Step 5: Quality check
+python scripts/check_downloaded_phonon_data.py
+
+# Step 6: Plot phonon data
+python scripts/plot_downloaded_phonons.py
+
+# Step 7: Compute interface G_pp
+python scripts/compute_downloaded_interface_gpp.py --temperature 300
+```
+
+### Data limitations
+
+- **MP phonon data coverage is limited** — most of Cu, TiN, SiO₂, Si₃N₄,
+  HfO₂ do not have DFPT phonon bandstructures in the current MP database.
+  All 5 materials are marked `needs_phonopy` for phonon dispersion.
+- **MP data is crystalline** — device SiO₂, Si₃N₄, HfO₂ are often amorphous
+  or polycrystalline.  MP crystalline phases are first-pass proxies.
+- **High-symmetry path vg is approximate** — group velocity from finite
+  differences along MP bandstructure paths is not a full-BZ transport
+  spectrum.  Quantitative TBC requires Phonopy with full-BZ sampling.
+- **All structures are downloaded** — ready for Phonopy calculations as the
+  next step.
+
 ## Known Limitations
 
 - **DMM assumes elastic diffuse interface scattering** — no acoustic mismatch model (AMM), no specular reflection component.

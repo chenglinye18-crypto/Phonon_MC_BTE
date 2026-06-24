@@ -1,0 +1,15 @@
+{
+  "label": "SiO2",
+  "material_id": "mp-7000",
+  "download_time_utc": "2026-06-24T08:03:07.388664+00:00",
+  "has_structure": true,
+  "has_phonon_bandstructure": false,
+  "has_phonon_dos": false,
+  "needs_phonopy": true,
+  "warnings": [
+    "phonon bandstructure download failed: 'PhononBS' object has no attribute 'as_dict'",
+    "phonon DOS download failed: 'PhononDOS' object has no attribute 'as_dict'"
+  ],
+  "structure_formula": "SiO2",
+  "structure_n_sites": 9
+}

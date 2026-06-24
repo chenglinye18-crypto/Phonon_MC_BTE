@@ -1,0 +1,8 @@
+pair,material_A,material_B,mp_id_A,mp_id_B,temperature_K,G_pp_W_m2K,G_pp_GW_m2K,R_pp_m2K_W,status,notes
+Cu|TiN,Cu,TiN,mp-30,mp-492,300.0,,,,missing_data,Cu: no converted dispersion (needs Phonopy)
+TiN|HfO2,TiN,HfO2,mp-492,mp-352,300.0,,,,missing_data,TiN: no converted dispersion (needs Phonopy)
+Cu|HfO2,Cu,HfO2,mp-30,mp-352,300.0,,,,missing_data,Cu: no converted dispersion (needs Phonopy)
+TiN|SiO2,TiN,SiO2,mp-492,mp-7000,300.0,,,,missing_data,TiN: no converted dispersion (needs Phonopy)
+TiN|Si3N4,TiN,Si3N4,mp-492,mp-988,300.0,,,,missing_data,TiN: no converted dispersion (needs Phonopy)
+HfO2|SiO2,HfO2,SiO2,mp-352,mp-7000,300.0,,,,missing_data,HfO2: no converted dispersion (needs Phonopy)
+HfO2|Si3N4,HfO2,Si3N4,mp-352,mp-988,300.0,,,,missing_data,HfO2: no converted dispersion (needs Phonopy)
