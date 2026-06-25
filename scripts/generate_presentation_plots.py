@@ -191,39 +191,66 @@ def fig1_dispersion_dos():
 def fig2_kappa_T():
     """Temperature-dependent thermal conductivity."""
     T_grid = np.linspace(100, 600, 51)
-    fig, (ax_p, ax_e) = plt.subplots(1, 2, figsize=(14, 5.5), constrained_layout=True)
 
-    for label, props in MATERIALS.items():
+    fig, (ax_diel, ax_metal) = plt.subplots(1, 2, figsize=(14, 5.5), constrained_layout=True)
+
+    # Left: Dielectrics (κp only)
+    for label in ["SiO2", "Si3N4", "HfO2"]:
+        props = MATERIALS[label]
         kp = compute_kappa_T(label, T_grid)
-        ax_p.plot(T_grid, kp, linewidth=2.0, color=props["color"], label=label)
-    ax_p.set_xlabel("Temperature (K)")
-    ax_p.set_ylabel(r"$\kappa_p$ (W/(m·K))")
-    ax_p.set_title("Phonon thermal conductivity (MP DOS + isotropic vg)")
-    ax_p.legend(fontsize=9)
-    ax_p.grid(True, alpha=0.3)
+        ax_diel.plot(T_grid, kp, linewidth=2.0, color=props["color"], label=f"{label} κp")
+    ax_diel.set_xlabel("Temperature (K)")
+    ax_diel.set_ylabel(r"$\kappa$ (W/(m·K))")
+    ax_diel.set_title("Dielectrics: κp (phonon only)")
+    ax_diel.legend(fontsize=9)
+    ax_diel.grid(True, alpha=0.3)
 
-    # Electronic κ for Cu (Wiedemann-Franz)
+    # Right: Metals/conductive ceramics (κp + κe = κtotal)
     T_fine = np.linspace(100, 600, 200)
-    for label, rho0, alpha in [("Cu", 1.7e-8, 0.0039), ("TiN", 1.0e-6, 0.001)]:
+    for label, rho0, alpha, style in [
+        ("Cu", 1.7e-8, 0.0039, "-"),
+        ("TiN", 2.0e-7, 0.001, "--"),   # stoichiometric TiN: rho~20 uOhm·cm
+    ]:
+        props = MATERIALS[label]
+        kp = compute_kappa_T(label, T_grid)
         ke = np.array([kappa_e_wiedemann_franz(float(t), rho0, alpha) for t in T_fine])
-        ax_e.plot(T_fine, ke, linewidth=2.0, color=MATERIALS[label]["color"],
-                 linestyle="--", label=f"{label} κe (WF)")
-    ax_e.set_xlabel("Temperature (K)")
-    ax_e.set_ylabel(r"$\kappa_e$ (W/(m·K))")
-    ax_e.set_title("Electronic thermal conductivity (Wiedemann-Franz)")
-    ax_e.legend(fontsize=9)
-    ax_e.grid(True, alpha=0.3)
+        kp_interp = np.interp(T_fine, T_grid, kp)
+        ktotal = kp_interp + ke
+
+        ax_metal.plot(T_fine, kp_interp, linewidth=1.2, color=props["color"],
+                     linestyle=":", alpha=0.7, label=f"{label} κp")
+        ax_metal.plot(T_fine, ke, linewidth=1.5, color=props["color"],
+                     linestyle="--", alpha=0.7, label=f"{label} κe (WF)")
+        ax_metal.plot(T_fine, ktotal, linewidth=2.2, color=props["color"],
+                     linestyle=style, label=f"{label} κtotal")
+    ax_metal.set_xlabel("Temperature (K)")
+    ax_metal.set_ylabel(r"$\kappa$ (W/(m·K))")
+    ax_metal.set_title("Metals/ceramics: κp + κe = κtotal")
+    ax_metal.legend(fontsize=8, ncol=2)
+    ax_metal.grid(True, alpha=0.3)
 
     fig.savefig(OUTDIR / "02_kappa_T_all.png", dpi=200)
     plt.close(fig)
 
-    # Print κp table
+    # Print table
     print("\n[OK] 02_kappa_T_all.png")
-    print(f"\n{'Material':10s} {'κp(300K)':>12s} {'κp(600K)':>12s}")
-    print("-" * 36)
-    for label in MATERIALS:
-        kp = compute_kappa_T(label, np.array([300.0, 600.0]))
-        print(f"{label:10s} {kp[0]:12.4f} {kp[1]:12.4f}")
+    print(f"\n{'Material':10s} {'κp(300K)':>10s} {'κe(300K)':>10s} {'κtotal':>10s}  Notes")
+    print("-" * 58)
+    for label in ["Cu", "TiN", "SiO2", "Si3N4", "HfO2"]:
+        kp = compute_kappa_T(label, np.array([300.0]))[0]
+        if label == "Cu":
+            ke = kappa_e_wiedemann_franz(300, 1.7e-8, 0.0039)
+        elif label == "TiN":
+            ke = kappa_e_wiedemann_franz(300, 2.0e-7, 0.001)
+        else:
+            ke = 0.0
+        ktot = kp + ke
+        note = ""
+        if label == "TiN":
+            note = "(stoichiometric, ρ~20μΩ·cm)"
+        elif label == "Cu":
+            note = "(bulk Cu, ρ~1.7μΩ·cm)"
+        print(f"{label:10s} {kp:10.4f} {ke:10.1f} {ktot:10.1f}  {note}")
 
 
 # ======================================================================
@@ -322,8 +349,18 @@ def fig4_summary():
     T_grid = np.array([100, 200, 300, 400, 500, 600])
     for label in MATERIALS:
         kp = compute_kappa_T(label, T_grid)
-        lines.append(f"  {label:8s}: " +
-                     " ".join(f"κ({int(T)}K)={kp[i]:.3f}" for i, T in enumerate(T_grid)))
+        if label == "Cu":
+            ke_vals = [kappa_e_wiedemann_franz(float(t), 1.7e-8, 0.0039) for t in T_grid]
+            ttype = "κp+κe"
+        elif label == "TiN":
+            ke_vals = [kappa_e_wiedemann_franz(float(t), 2.0e-7, 0.001) for t in T_grid]
+            ttype = "κp+κe"
+        else:
+            ke_vals = [0.0]*len(T_grid)
+            ttype = "κp only"
+        ktot = [kp[i]+ke_vals[i] for i in range(len(T_grid))]
+        lines.append(f"  {label:8s} ({ttype:>8s}): " +
+                     " ".join(f"κ({int(T)}K)={ktot[i]:.3f}" for i, T in enumerate(T_grid)))
 
     lines += [
         "",
